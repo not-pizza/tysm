@@ -1,6 +1,6 @@
 [package]
 name = "tysm"
-version = "0.2.8"
+version = "0.2.9"
 edition = "2021"
 description = "Typed OpenAI Chat Completions"
 license = "MIT"
