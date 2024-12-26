@@ -277,6 +277,16 @@ impl ChatClient {
     ///
     /// The last 1024 Responses are cached in the client, so sending the same request twice
     /// will return the same response.
+    ///
+    /// **Important:** The response type must implement the `JsonSchema` trait
+    /// from an in-development version of the `schemars` crate. The version of `schemars` published on crates.io will not work.
+    /// Add the in-development version to your Cargo.toml like this:
+    /// ```rust,ignore
+    /// [dependencies]
+    /// schemars = { git = "https://github.com/GREsau/schemars.git", version = "1.0.0-alpha.17", features = [
+    ///     "preserve_order",
+    /// ] }
+    /// ```
     pub async fn chat<T: DeserializeOwned + JsonSchema>(
         &self,
         prompt: impl Into<String>,
