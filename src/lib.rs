@@ -1,6 +1,46 @@
-//! A simple library to interact with the ChatGPT API.
+//! # `tysm` - Thank You So Much
 //!
-//! It uses the [schemars](https://docs.rs/schemars/latest/schemars/index.html) crate to generate a schema for the desired response type.
+//! Typed OpenAI Chat Completions.
+//!
+//! A strongly-typed Rust client for OpenAI's ChatGPT API that enforces type-safe responses using [Structured Outputs](https://platform.openai.com/docs/guides/structured-outputs).
+//!
+//! This library uses the [schemars](https://docs.rs/schemars/latest/schemars/index.html) crate to generate a schema for the desired response type. It also uses [serde](https://docs.rs/serde/latest/serde/index.html) to deserialize the response into the desired type. Install these crates like so:
+//!
+//! 1. `cargo add serde`.
+//! 2. `cargo add --git https://github.com/GREsau/schemars.git schemars`
+//!
+//! ## Usage
+//!
+//! ```rust,ignore
+//! use tysm::ChatClient;
+//!
+//! // We want names separated into `first` and `last`.
+//! #[derive(serde::Deserialize, schemars::JsonSchema)]
+//! struct Name {
+//!     first: String,
+//!     last: String,
+//! }
+//!
+//! async fn get_president_name() {
+//!     // Create a client.
+//!     // `from_env` will look for an API key under the environment
+//!     // variable "OPENAI_API_KEY"
+//!     // It will also look inside `.env` if such a file exists.
+//!     let client = ChatClient::from_env("gpt-4o").unwrap();
+//!     
+//!     // Request a chat completion from OpenAI and
+//!     // parse the response into our `Name` struct.
+//!     let name: Name = client
+//!         .chat("Who was the first US president?")
+//!         .await
+//!         .unwrap();
+//!
+//!     assert_eq!(name.first, "George");
+//!     assert_eq!(name.last, "Washington");
+//! }
+//! ```
+//!
+//! Alternative name: **T**yped **S**chema **M**agic.
 
 #![deny(missing_docs)]
 

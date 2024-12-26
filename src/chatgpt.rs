@@ -245,6 +245,9 @@ impl ChatClient {
     /// It will also look in the `.env` file for an `OPENAI_API_KEY` variable (using dotenv).
     ///
     /// ```rust
+    /// # use tysm::ChatClient;
+    /// let client = ChatClient::from_env("gpt-4o").unwrap();
+    /// ```
     pub fn from_env(model: impl Into<String>) -> Result<Self, OpenAiApiKeyError> {
         Ok(Self::new(api_key()?, model))
     }

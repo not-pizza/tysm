@@ -1,6 +1,6 @@
 [package]
 name = "tysm"
-version = "0.2.9"
+version = "0.2.10"
 edition = "2021"
 description = "Typed OpenAI Chat Completions"
 license = "MIT"
@@ -19,7 +19,7 @@ serde_json = "1.0.107"
 thiserror = "2.0.9"
 tynm = "0.1.10"
 lru = "0.12.5"
-schemars = { git = "https://github.com/GREsau/schemars.git", version = "1.0.0-alpha.17", features = [
+schemars = { git = "https://github.com/GREsau/schemars.git", features = [
     "preserve_order",
 ] }
 

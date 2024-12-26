@@ -1,9 +1,9 @@
-# tysm
+# tysm - Thank You So Much
 
 **Typed OpenAI Chat Completions in Rust**
 
 ## Table of Contents
-- [tysm](#tysm)
+- [tysm - Thank You So Much](#tysm---thank-you-so-much)
   - [Table of Contents](#table-of-contents)
   - [Usage](#usage)
   - [Features](#features)
