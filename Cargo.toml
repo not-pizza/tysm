@@ -24,3 +24,6 @@ lru = "0.12.5"
 schemars = { git = "https://github.com/GREsau/schemars.git", version = "1.0.0-alpha.17", features = [
     "preserve_order",
 ] }
+
+[dev-dependencies]
+tokio-test = "0.4"

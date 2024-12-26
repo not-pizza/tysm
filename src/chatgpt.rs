@@ -8,11 +8,31 @@ use thiserror::Error;
 
 use crate::schema::OpenAiTransform;
 
+/// To use this library, you need to create a [`ChatClient`]. This contains various information needed to interact with the ChatGPT API,
+/// such as the API key, the model to use, and the URL of the API.
+///
+/// ```rust
+/// # use tysm::ChatClient;
+/// // Create a client with your API key and model
+/// let client = ChatClient::new("sk-1234567890", "gpt-4o");
+/// ```
+///
+/// ```rust
+/// # use tysm::ChatClient;
+/// // Create a client using an API key stored in an `OPENAI_API_KEY` environment variable.
+/// // (This will also look for an `.env` file in the current directory.)
+/// let client = ChatClient::from_env("gpt-4o").unwrap();
+/// ```
 pub struct ChatClient {
+    /// The API key to use for the ChatGPT API.
     pub api_key: String,
+    /// The URL of the ChatGPT API. Customize this if you are using a custom API that is compatible with OpenAI's.
     pub url: String,
+    /// The model to use for the ChatGPT API.
     pub model: String,
+    /// A cache of the few responses. Stores the last 1024 responses by default.
     pub lru: RwLock<LruCache<String, String>>,
+    /// This client's token consumption (as reported by the API).
     pub usage: RwLock<ChatUsage>,
 }
 
@@ -26,34 +46,64 @@ pub enum Role {
     System,
 }
 
+/// A message to send to the ChatGPT API.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ChatMessage {
+    /// The role of user sending the message.
     pub role: Role,
+    /// The content of the message. It is a vector of [`ChatMessageContent`]s,
+    /// which allows you to include images in the message.
     pub content: Vec<ChatMessageContent>,
 }
 
+/// The content of a message.
+///
+/// Currently, only text and image URLs are supported.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ChatMessageContent {
+    /// A textual message.
     Text {
+        /// The text of the message.
         text: String,
     },
+    /// An image URL.
+    /// The image URL can also be a base64 encoded image.
+    /// example:
+    /// ```rust
+    /// use tysm::{ChatMessageContent, ImageUrl};
+    ///
+    /// let base64_image = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+    /// let content = ChatMessageContent::ImageUrl {
+    ///     image: ImageUrl {
+    ///         url: format!("data:image/png;base64,{base64_image}"),
+    ///     },
+    /// };
+    /// ```
     ImageUrl {
+        /// The image URL.
         #[serde(rename = "image_url")]
         image: ImageUrl,
     },
 }
 
+/// An image URL. OpenAI will accept a link to an image, or a base64 encoded image.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ImageUrl {
-    url: String,
+    /// The image URL.
+    pub url: String,
 }
 
+/// A request to the ChatGPT API. You probably will not need to use this directly,
+/// but it is public because it is still exposed in errors.
 #[derive(Serialize, Clone, Debug)]
 pub struct ChatRequest {
-    model: String,
-    messages: Vec<ChatMessage>,
-    response_format: ResponseFormat,
+    /// The model to use for the ChatGPT API.
+    pub model: String,
+    /// The messages to send to the API.
+    pub messages: Vec<ChatMessage>,
+    /// The response format to use for the ChatGPT API.
+    pub response_format: ResponseFormat,
 }
 
 #[derive(Serialize, Debug, Clone)]
@@ -64,7 +114,6 @@ pub struct ResponseFormat {
 }
 
 #[derive(Serialize, Debug, Clone)]
-
 pub struct JsonSchemaFormat {
     name: String,
     strict: bool,
@@ -127,6 +176,7 @@ impl std::ops::AddAssign for ChatUsage {
     }
 }
 
+/// An error that occurs when the OpenAI API key is not found in the environment.
 #[derive(Debug)]
 pub struct OpenAiApiKeyError(#[expect(unused)] std::env::VarError);
 impl std::fmt::Display for OpenAiApiKeyError {
@@ -145,20 +195,26 @@ fn api_key() -> Result<String, OpenAiApiKeyError> {
     std::env::var("OPENAI_API_KEY").map_err(OpenAiApiKeyError)
 }
 
+/// Errors that can occur when interacting with the ChatGPT API.
 #[derive(Error, Debug)]
 pub enum ChatError {
+    /// An error occurred when sending the request to the API.
     #[error("Request error: {0}")]
     RequestError(#[from] reqwest::Error),
 
+    /// An error occurred when serializing the request to JSON.
     #[error("JSON serialization error: {0}")]
     JsonSerializeError(serde_json::Error, ChatRequest),
 
+    /// An error occurred when deserializing the response from the API.
     #[error("API returned an error response: {0} \nresponse: {1} \nrequest: {2}")]
     ApiResponseError(serde_json::Error, String, String),
 
+    /// The API returned a response that was not a valid JSON object.
     #[error("API returned a response that was not a valid JSON object: {0} \nresponse: {1}")]
     InvalidJson(serde_json::Error, String),
 
+    /// The API did not return any choices.
     #[error("No choices returned from API")]
     NoChoices,
 }
@@ -166,6 +222,12 @@ pub enum ChatError {
 impl ChatClient {
     /// Create a new [`ChatClient`].
     /// If the API key is in the environment, you can use the [`Self::from_env`] method instead.
+    ///
+    /// ```rust
+    /// use tysm::ChatClient;
+    ///
+    /// let client = ChatClient::new("sk-1234567890", "gpt-4o");
+    /// ```
     pub fn new(api_key: impl Into<String>, model: impl Into<String>) -> Self {
         use std::num::NonZeroUsize;
 
@@ -181,11 +243,40 @@ impl ChatClient {
     /// Create a new [`ChatClient`].
     /// This will use the `OPENAI_API_KEY` environment variable to set the API key.
     /// It will also look in the `.env` file for an `OPENAI_API_KEY` variable (using dotenv).
+    ///
+    /// ```rust
     pub fn from_env(model: impl Into<String>) -> Result<Self, OpenAiApiKeyError> {
         Ok(Self::new(api_key()?, model))
     }
 
     /// Send a chat message to the API and deserialize the response into the given type.
+    ///
+    /// ```rust
+    /// # use tysm::ChatClient;
+    /// #  let client = {
+    /// #     let my_api = "https://g7edusstdonmn3vxdh3qdypkrq0wzttx.lambda-url.us-east-1.on.aws/v1/chat/completions".to_string();
+    /// #     ChatClient {
+    /// #         url: my_api,
+    /// #         ..ChatClient::from_env("gpt-4o").unwrap()
+    /// #     }
+    /// # };
+    ///
+    /// #[derive(serde::Deserialize, Debug, schemars::JsonSchema)]
+    /// struct CityName {
+    ///     english: String,
+    ///     local: String,
+    /// }
+    ///
+    /// # tokio_test::block_on(async {
+    /// let response: CityName = client.chat("What is the capital of Portugal?").await.unwrap();
+    ///
+    /// assert_eq!(response.english, "Lisbon");
+    /// assert_eq!(response.local, "Lisboa");
+    /// # })
+    /// ```
+    ///
+    /// The last 1024 Responses are cached in the client, so sending the same request twice
+    /// will return the same response.
     pub async fn chat<T: DeserializeOwned + JsonSchema>(
         &self,
         prompt: impl Into<String>,
@@ -227,13 +318,20 @@ impl ChatClient {
         let mut schema = schema_for!(T);
         OpenAiTransform.transform(&mut schema);
 
+        let ty_name = tynm::type_name::<T>();
+        let ty_name = if ty_name.is_empty() {
+            "response".to_string()
+        } else {
+            ty_name
+        };
+
         let chat_request = ChatRequest {
             model: self.model.clone(),
             messages,
             response_format: ResponseFormat {
                 format_type: "json_schema".to_string(),
                 json_schema: JsonSchemaFormat {
-                    name: tynm::type_name::<T>(),
+                    name: ty_name,
                     strict: true,
                     schema: SchemaFormat {
                         additional_properties: false,

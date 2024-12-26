@@ -1,7 +1,19 @@
+//! A simple library to interact with the ChatGPT API.
+//!
+//! It uses the [schemars](https://docs.rs/schemars/latest/schemars/index.html) crate to generate a schema for the desired response type.
+
+#![deny(missing_docs)]
+
 mod chatgpt;
 mod schema;
 
 pub use chatgpt::ChatClient;
+pub use chatgpt::ChatError;
+pub use chatgpt::ChatMessage;
+pub use chatgpt::ChatMessageContent;
+pub use chatgpt::ChatRequest;
+pub use chatgpt::ImageUrl;
+pub use chatgpt::OpenAiApiKeyError;
 
 #[cfg(test)]
 mod tests {
