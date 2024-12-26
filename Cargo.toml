@@ -7,6 +7,13 @@ license = "MIT"
 homepage = "https://github.com/not-pizza/tysm"
 repository = "https://github.com/not-pizza/tysm"
 readme = "README.md"
+keywords = [
+    "openai",
+    "chatgpt",
+    "chat-completions",
+    "structured-outputs",
+    "schema"
+]
 
 [features]
 default = ["dotenv"]
