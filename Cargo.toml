@@ -16,7 +16,6 @@ dotenv = { version = "0.15.0", optional = true }
 reqwest = { version = "0.11.20", features = ["json"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.107"
-tokio = { version = "1.21.2", features = ["macros", "rt-multi-thread"] }
 anyhow = "1.0.75"
 thiserror = "2.0.9"
 tynm = "0.1.10"
@@ -26,4 +25,5 @@ schemars = { git = "https://github.com/GREsau/schemars.git", version = "1.0.0-al
 ] }
 
 [dev-dependencies]
+tokio = { version = "1.21.2", features = ["macros", "rt-multi-thread"] }
 tokio-test = "0.4"
