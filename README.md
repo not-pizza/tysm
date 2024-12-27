@@ -2,7 +2,7 @@
 
 **Typed OpenAI Chat Completions in Rust**
 
-[crates.io](https://crates.io/crates/tysm) | [docs.rs](https://docs.rs/tysm/latest/tysm/)
+[crates.io](https://crates.io/crates/tysm) | [docs.rs](https://docs.rs/tysm/latest/tysm/) | [blog post](https://chadnauseam.com/coding/ai/openai-structured-outputs-are-really-useful)
 
 ## Table of Contents
 - [tysm - Thank You So Much](#tysm---thank-you-so-much)
