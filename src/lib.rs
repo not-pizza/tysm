@@ -36,11 +36,63 @@
 //!         .unwrap();
 //!
 //!     assert_eq!(name.first, "George");
+
 //!     assert_eq!(name.last, "Washington");
+
 //! }
+
 //! ```
+
 //!
+
 //! Alternative name: **T**yped **S**chema **M**agic.
+
+//!
+
+//! ```rust,no_run
+
+//! use tysm::ChatClient;
+
+//!
+
+//! // Create a client from a `OPENAI_API_KEY` environment variable
+
+//! let client = ChatClient::from_env("gpt-4o");
+
+//! // or pass in your API key explicitly
+
+//! let client = ChatClient::new("sk-1234567890", "gpt-4o");
+
+//!
+
+//! // Define your response struct
+
+//! #[derive(serde::Deserialize, Debug, schemars::JsonSchema)]
+
+//! struct CityName {
+
+//!     english: String,
+
+//!     local: String,
+
+//! }
+
+//!
+
+//! # tokio_test::block_on(async {
+
+//! // Send a chat message to the API and deserialize the response into your struct
+
+//! let response: CityName = client.chat("What is the capital of Portugal?").await.unwrap();
+
+//!
+
+//! assert_eq!(response.english, "Lisbon");
+
+//! assert_eq!(response.local, "Lisboa");
+
+//! # })
+
 
 #![deny(missing_docs)]
 
