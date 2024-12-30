@@ -22,7 +22,7 @@ A strongly-typed Rust client for OpenAI's ChatGPT API that enforces type-safe re
 ## Usage
 
 ```rust
-use tysm::ChatClient;
+use tysm::chat_completions::ChatClient;
 
 /// We want names separated into `first` and `last`.
 #[derive(serde::Deserialize, schemars::JsonSchema)]

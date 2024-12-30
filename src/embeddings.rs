@@ -1,11 +1,10 @@
-use std::sync::RwLock;
+//! Embeddings are a way to represent text in a vector space.
+//! This module provides a client for interacting with the OpenAI Embeddings API.
 
-use lru::LruCache;
 use reqwest::Client;
-use schemars::{schema_for, transform::Transform, JsonSchema, Schema};
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 struct EmbeddingsRequest {
     model: String,
     input: String,
@@ -33,6 +32,7 @@ use thiserror::Error;
 
 use crate::utils::{api_key, OpenAiApiKeyError};
 
+/// A client for interacting with the OpenAI Embeddings API.
 pub struct EmbeddingsClient {
     /// The API key to use for the ChatGPT API.
     pub api_key: String,
@@ -49,10 +49,6 @@ pub enum EmbeddingsError {
     #[error("Request error: {0}")]
     RequestError(#[from] reqwest::Error),
 
-    /// An error occurred when serializing the request to JSON.
-    #[error("JSON serialization error: {0}")]
-    JsonSerializeError(serde_json::Error, EmbeddingsRequest),
-
     /// An error occurred when deserializing the response from the API.
     #[error("API returned an error response: {0} \nresponse: {1} \nrequest: {2}")]
     ApiResponseError(serde_json::Error, String, String),
@@ -63,7 +59,7 @@ pub enum EmbeddingsError {
 
     /// The API did not return any choices.
     #[error("No choices returned from API")]
-    NoChoices,
+    NoEmbeddings,
 }
 
 impl EmbeddingsClient {
@@ -71,13 +67,11 @@ impl EmbeddingsClient {
     /// If the API key is in the environment, you can use the [`Self::from_env`] method instead.
     ///
     /// ```rust
-    /// use tysm::EmbeddingsClient;
+    /// use tysm::embeddings::EmbeddingsClient;
     ///
     /// let client = EmbeddingsClient::new("sk-1234567890", "text-embedding-ada-002");
     /// ```
     pub fn new(api_key: impl Into<String>, model: impl Into<String>) -> Self {
-        use std::num::NonZeroUsize;
-
         Self {
             api_key: api_key.into(),
             url: "https://api.openai.com/v1/embeddings".into(),
@@ -90,24 +84,19 @@ impl EmbeddingsClient {
     /// It will also look in the `.env` file for an `OPENAI_API_KEY` variable (using dotenv).
     ///
     /// ```rust
-    /// # use tysm::EmbeddingsClient;
+    /// # use tysm::embeddings::EmbeddingsClient;
     /// let client = EmbeddingsClient::from_env("gpt-4o").unwrap();
     /// ```
     pub fn from_env(model: impl Into<String>) -> Result<Self, OpenAiApiKeyError> {
         Ok(Self::new(api_key()?, model))
     }
 
-    pub async fn embed<T: DeserializeOwned + JsonSchema>(
-        &self,
-        prompt: impl Into<String>,
-    ) -> Result<T, EmbeddingsError> {
+    /// Embed a prompt into a vector space.
+    pub async fn embed(&self, prompt: impl Into<String>) -> Result<Vec<f32>, EmbeddingsError> {
         let request = EmbeddingsRequest {
             model: self.model.clone(),
             input: prompt.into(),
         };
-
-        let request_json = serde_json::to_string(&request)
-            .map_err(|e| EmbeddingsError::JsonSerializeError(e, request))?;
 
         let client = Client::new();
         let response = client
@@ -119,12 +108,22 @@ impl EmbeddingsClient {
             .await?;
 
         let response_text = response.text().await?;
-        
-        let embeddings_response: EmbeddingsResponse = serde_json::from_str(&response_text)
-            .map_err(|e| EmbeddingsError::ApiResponseError(e, response_text.clone(), request_json.clone()))?;
 
-        // Convert the response to the requested type
-        serde_json::from_value(serde_json::to_value(embeddings_response)?)
-            .map_err(|e| EmbeddingsError::InvalidJson(e, response_text))
+        let embeddings_response: EmbeddingsResponse = serde_json::from_str(&response_text)
+            .map_err(|e| {
+                EmbeddingsError::ApiResponseError(
+                    e,
+                    response_text.clone(),
+                    serde_json::to_string(&request).unwrap(),
+                )
+            })?;
+
+        let embedding = embeddings_response
+            .data
+            .into_iter()
+            .next()
+            .ok_or(EmbeddingsError::NoEmbeddings)?;
+
+        Ok(embedding.embedding)
     }
 }
