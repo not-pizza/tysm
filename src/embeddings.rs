@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct EmbeddingsRequest {
     model: String,
-    input: String,
+    input: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -53,13 +53,13 @@ pub enum EmbeddingsError {
     #[error("API returned an error response: {0} \nresponse: {1} \nrequest: {2}")]
     ApiResponseError(serde_json::Error, String, String),
 
-    /// The API returned a response that was not a valid JSON object.
-    #[error("API returned a response that was not a valid JSON object: {0} \nresponse: {1}")]
+    /// The API returned a response that was not the expected JSON object.
+    #[error("API returned a response that was not the expected JSON object: {0} \nresponse: {1}")]
     InvalidJson(serde_json::Error, String),
 
     /// The API did not return any choices.
-    #[error("No choices returned from API")]
-    NoEmbeddings,
+    #[error("The wrong amount of embeddings was returned from API")]
+    IncorrectNumberOfEmbeddings,
 }
 
 impl EmbeddingsClient {
@@ -92,10 +92,12 @@ impl EmbeddingsClient {
     }
 
     /// Embed a prompt into a vector space.
-    pub async fn embed(&self, prompt: impl Into<String>) -> Result<Vec<f32>, EmbeddingsError> {
+    pub async fn embed(&self, documents: Vec<String>) -> Result<Vec<Vec<f32>>, EmbeddingsError> {
+        // should embed in batches of 100, AI!
+        let documents_len = documents.len();
         let request = EmbeddingsRequest {
             model: self.model.clone(),
-            input: prompt.into(),
+            input: documents,
         };
 
         let client = Client::new();
@@ -118,12 +120,16 @@ impl EmbeddingsClient {
                 )
             })?;
 
-        let embedding = embeddings_response
+        if embeddings_response.data.len() != documents_len {
+            return Err(EmbeddingsError::IncorrectNumberOfEmbeddings);
+        }
+
+        let embeddings = embeddings_response
             .data
             .into_iter()
-            .next()
-            .ok_or(EmbeddingsError::NoEmbeddings)?;
+            .map(|e| e.embedding)
+            .collect();
 
-        Ok(embedding.embedding)
+        Ok(embeddings)
     }
 }
