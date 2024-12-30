@@ -92,16 +92,22 @@ impl EmbeddingsClient {
     }
 
     /// Embed a prompt into a vector space.
+    /// 
+    /// Documents are processed in batches of 100 to stay within API limits.
     pub async fn embed(&self, documents: Vec<String>) -> Result<Vec<Vec<f32>>, EmbeddingsError> {
-        // should embed in batches of 100, AI!
+        const BATCH_SIZE: usize = 100;
         let documents_len = documents.len();
-        let request = EmbeddingsRequest {
-            model: self.model.clone(),
-            input: documents,
-        };
-
         let client = Client::new();
-        let response = client
+        let mut all_embeddings = Vec::with_capacity(documents_len);
+
+        // Process documents in batches
+        for chunk in documents.chunks(BATCH_SIZE) {
+            let request = EmbeddingsRequest {
+                model: self.model.clone(),
+                input: chunk.to_vec(),
+            };
+
+            let response = client
             .post(&self.url)
             .header("Authorization", format!("Bearer {}", self.api_key))
             .header("Content-Type", "application/json")
@@ -111,25 +117,27 @@ impl EmbeddingsClient {
 
         let response_text = response.text().await?;
 
-        let embeddings_response: EmbeddingsResponse = serde_json::from_str(&response_text)
-            .map_err(|e| {
-                EmbeddingsError::ApiResponseError(
-                    e,
-                    response_text.clone(),
-                    serde_json::to_string(&request).unwrap(),
-                )
-            })?;
+            let embeddings_response: EmbeddingsResponse = serde_json::from_str(&response_text)
+                .map_err(|e| {
+                    EmbeddingsError::ApiResponseError(
+                        e,
+                        response_text.clone(),
+                        serde_json::to_string(&request).unwrap(),
+                    )
+                })?;
 
-        if embeddings_response.data.len() != documents_len {
-            return Err(EmbeddingsError::IncorrectNumberOfEmbeddings);
+            if embeddings_response.data.len() != chunk.len() {
+                return Err(EmbeddingsError::IncorrectNumberOfEmbeddings);
+            }
+
+            all_embeddings.extend(
+                embeddings_response
+                    .data
+                    .into_iter()
+                    .map(|e| e.embedding)
+            );
         }
 
-        let embeddings = embeddings_response
-            .data
-            .into_iter()
-            .map(|e| e.embedding)
-            .collect();
-
-        Ok(embeddings)
+        Ok(all_embeddings)
     }
 }
