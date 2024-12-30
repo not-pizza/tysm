@@ -4,6 +4,31 @@ use lru::LruCache;
 use reqwest::Client;
 use schemars::{schema_for, transform::Transform, JsonSchema, Schema};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
+
+#[derive(Debug, Serialize, Deserialize)]
+struct EmbeddingsRequest {
+    model: String,
+    input: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct EmbeddingsResponse {
+    data: Vec<Embedding>,
+    model: String,
+    usage: Usage,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct Embedding {
+    embedding: Vec<f32>,
+    index: usize,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct Usage {
+    prompt_tokens: u32,
+    total_tokens: u32,
+}
 use thiserror::Error;
 
 use crate::utils::{api_key, OpenAiApiKeyError};
@@ -42,13 +67,13 @@ pub enum EmbeddingsError {
 }
 
 impl EmbeddingsClient {
-    /// Create a new [`ChatClient`].
+    /// Create a new [`EmbeddingsClient`].
     /// If the API key is in the environment, you can use the [`Self::from_env`] method instead.
     ///
     /// ```rust
-    /// use tysm::ChatClient;
+    /// use tysm::EmbeddingsClient;
     ///
-    /// let client = ChatClient::new("sk-1234567890", "gpt-4o");
+    /// let client = EmbeddingsClient::new("sk-1234567890", "text-embedding-ada-002");
     /// ```
     pub fn new(api_key: impl Into<String>, model: impl Into<String>) -> Self {
         use std::num::NonZeroUsize;
@@ -76,6 +101,30 @@ impl EmbeddingsClient {
         &self,
         prompt: impl Into<String>,
     ) -> Result<T, EmbeddingsError> {
-        // Implement embeddings, AI!
+        let request = EmbeddingsRequest {
+            model: self.model.clone(),
+            input: prompt.into(),
+        };
+
+        let request_json = serde_json::to_string(&request)
+            .map_err(|e| EmbeddingsError::JsonSerializeError(e, request))?;
+
+        let client = Client::new();
+        let response = client
+            .post(&self.url)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("Content-Type", "application/json")
+            .json(&request)
+            .send()
+            .await?;
+
+        let response_text = response.text().await?;
+        
+        let embeddings_response: EmbeddingsResponse = serde_json::from_str(&response_text)
+            .map_err(|e| EmbeddingsError::ApiResponseError(e, response_text.clone(), request_json.clone()))?;
+
+        // Convert the response to the requested type
+        serde_json::from_value(serde_json::to_value(embeddings_response)?)
+            .map_err(|e| EmbeddingsError::InvalidJson(e, response_text))
     }
 }
