@@ -44,16 +44,18 @@
 
 #![deny(missing_docs)]
 
-mod chatgpt;
+mod chat_completions;
+mod embeddings;
 mod schema;
+mod utils;
 
-pub use chatgpt::ChatClient;
-pub use chatgpt::ChatError;
-pub use chatgpt::ChatMessage;
-pub use chatgpt::ChatMessageContent;
-pub use chatgpt::ChatRequest;
-pub use chatgpt::ImageUrl;
-pub use chatgpt::OpenAiApiKeyError;
+pub use chat_completions::ChatClient;
+pub use chat_completions::ChatError;
+pub use chat_completions::ChatMessage;
+pub use chat_completions::ChatMessageContent;
+pub use chat_completions::ChatRequest;
+pub use chat_completions::ImageUrl;
+pub use utils::OpenAiApiKeyError;
 
 #[cfg(test)]
 mod tests {

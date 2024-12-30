@@ -7,6 +7,7 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::schema::OpenAiTransform;
+use crate::utils::{api_key, OpenAiApiKeyError};
 
 /// To use this library, you need to create a [`ChatClient`]. This contains various information needed to interact with the ChatGPT API,
 /// such as the API key, the model to use, and the URL of the API.
@@ -174,25 +175,6 @@ impl std::ops::AddAssign for ChatUsage {
         self.completion_tokens += rhs.completion_tokens;
         self.total_tokens += rhs.total_tokens;
     }
-}
-
-/// An error that occurs when the OpenAI API key is not found in the environment.
-#[derive(Debug)]
-pub struct OpenAiApiKeyError(#[expect(unused)] std::env::VarError);
-impl std::fmt::Display for OpenAiApiKeyError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Unable to find the OpenAI API key in the environment. Please set the OPENAI_API_KEY environment variable. API keys can be found at <https://platform.openai.com/api-keys>.")
-    }
-}
-impl std::error::Error for OpenAiApiKeyError {}
-
-fn api_key() -> Result<String, OpenAiApiKeyError> {
-    #[cfg(feature = "dotenv")]
-    {
-        use dotenv::dotenv;
-        dotenv().ok();
-    }
-    std::env::var("OPENAI_API_KEY").map_err(OpenAiApiKeyError)
 }
 
 /// Errors that can occur when interacting with the ChatGPT API.
