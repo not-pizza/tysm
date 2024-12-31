@@ -91,8 +91,13 @@ impl EmbeddingsClient {
         Ok(Self::new(api_key()?, model))
     }
 
-    /// Embed a prompt into a vector space.
-    /// 
+    /// Embed a single document into a vector space.
+    pub async fn embed_single(&self, document: String) -> Result<Vec<f32>, EmbeddingsError> {
+        let embeddings = self.embed(vec![document]).await?;
+        Ok(embeddings.first().unwrap().clone())
+    }
+
+    /// Embed documents into a vector space.
     /// Documents are processed in batches of 100 to stay within API limits.
     pub async fn embed(&self, documents: Vec<String>) -> Result<Vec<Vec<f32>>, EmbeddingsError> {
         const BATCH_SIZE: usize = 100;
@@ -108,14 +113,14 @@ impl EmbeddingsClient {
             };
 
             let response = client
-            .post(&self.url)
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .header("Content-Type", "application/json")
-            .json(&request)
-            .send()
-            .await?;
+                .post(&self.url)
+                .header("Authorization", format!("Bearer {}", self.api_key))
+                .header("Content-Type", "application/json")
+                .json(&request)
+                .send()
+                .await?;
 
-        let response_text = response.text().await?;
+            let response_text = response.text().await?;
 
             let embeddings_response: EmbeddingsResponse = serde_json::from_str(&response_text)
                 .map_err(|e| {
@@ -130,12 +135,7 @@ impl EmbeddingsClient {
                 return Err(EmbeddingsError::IncorrectNumberOfEmbeddings);
             }
 
-            all_embeddings.extend(
-                embeddings_response
-                    .data
-                    .into_iter()
-                    .map(|e| e.embedding)
-            );
+            all_embeddings.extend(embeddings_response.data.into_iter().map(|e| e.embedding));
         }
 
         Ok(all_embeddings)

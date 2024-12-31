@@ -1,6 +1,6 @@
 [package]
 name = "tysm"
-version = "0.2.10"
+version = "0.3.0"
 edition = "2021"
 description = "Typed OpenAI Chat Completions"
 license = "MIT"
@@ -12,7 +12,7 @@ keywords = [
     "chatgpt",
     "chat-completions",
     "structured-outputs",
-    "schema"
+    "schema",
 ]
 
 [features]
