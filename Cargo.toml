@@ -26,9 +26,7 @@ serde_json = "1.0.107"
 thiserror = "2.0.9"
 tynm = "0.1.10"
 lru = "0.12.5"
-schemars = { git = "https://github.com/GREsau/schemars.git", version = "1.0.0-alpha.17", features = [
-    "preserve_order",
-] }
+schemars = { version = "1.0.0-alpha.17", features = ["preserve_order"] }
 
 [dev-dependencies]
 tokio = { version = "1.21.2", features = ["macros", "rt-multi-thread"] }

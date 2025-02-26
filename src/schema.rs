@@ -44,6 +44,12 @@ impl Transform for OpenAiTransform {
                     );
                 }
             }
+
+            // oneOf keys need to be replaced with anyOf
+            if let Some(one_of) = obj.get("oneOf") {
+                obj.insert("anyOf".to_string(), one_of.clone());
+            }
+            obj.remove("oneOf");
         }
         transform_subschemas(self, schema);
     }
