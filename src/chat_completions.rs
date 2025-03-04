@@ -115,26 +115,78 @@ pub struct ChatRequest {
     pub response_format: ResponseFormat,
 }
 
+/// An object specifying the format that the model must output.
+/// `ResponseFormat::JsonSchema` enables Structured Outputs which ensures the model will match your supplied JSON schema
 #[derive(Serialize, Debug, Clone)]
-pub(crate) struct ResponseFormat {
-    #[serde(rename = "type")]
-    pub format_type: String,
-    pub json_schema: JsonSchemaFormat,
+#[serde(tag = "type")]
+pub enum ResponseFormat {
+    /// The model is constrained to return a JSON object of the specified schema.
+    #[serde(rename = "json_schema")]
+    JsonSchema {
+        /// The schema.
+        /// Often generated with `JsonSchemaFormat::new()`.
+        json_schema: JsonSchemaFormat,
+    },
+
+    /// The model is constrained to return a JSON object, but the schema is not enforced.
+    #[serde(rename = "json_object")]
+    JsonObject,
+
+    /// The model is not constrained to any specific format.
+    #[serde(rename = "text")]
+    Text,
 }
 
+/// The format of a JSON schema.
 #[derive(Serialize, Debug, Clone)]
-pub(crate) struct JsonSchemaFormat {
-    name: String,
-    strict: bool,
-    schema: SchemaFormat,
+pub struct JsonSchemaFormat {
+    /// The name of the schema. It's not clear whether this is actually used anywhere by OpenAI.
+    pub name: String,
+    /// Whether the schema is strict. (For openai, you always want this to be true.)
+    pub strict: bool,
+    /// The schema.
+    pub schema: SchemaFormat,
 }
 
+impl JsonSchemaFormat {
+    /// Create a new `JsonSchemaFormat`.
+    pub fn new<T: JsonSchema>() -> Self {
+        let mut schema = schema_for!(T);
+        let name = tynm::type_name::<T>();
+        let name = if name.is_empty() {
+            "response".to_string()
+        } else {
+            name
+        };
+
+        OpenAiTransform.transform(&mut schema);
+
+        Self::from_schema(schema, &name)
+    }
+
+    /// Create a new `JsonSchemaFormat` from a `Schema`.
+    pub fn from_schema(schema: Schema, ty_name: &str) -> Self {
+        Self {
+            name: ty_name.to_string(),
+            strict: true,
+            schema: SchemaFormat {
+                additional_properties: false,
+                schema,
+            },
+        }
+    }
+}
+
+/// A JSON schema with an "additionalProperties" field (expected by OpenAI).
 #[derive(Serialize, Debug, Clone)]
-pub(crate) struct SchemaFormat {
+pub struct SchemaFormat {
+    /// Whether additional properties are allowed. For OpenAI, you always want this to be false.
     #[serde(rename = "additionalProperties")]
-    additional_properties: bool,
+    pub additional_properties: bool,
+
+    /// The schema.
     #[serde(flatten)]
-    schema: Schema,
+    pub schema: Schema,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -322,30 +374,30 @@ impl ChatClient {
         &self,
         messages: Vec<ChatMessage>,
     ) -> Result<T, ChatError> {
-        let mut schema = schema_for!(T);
-        OpenAiTransform.transform(&mut schema);
+        let json_schema = JsonSchemaFormat::new::<T>();
 
-        let ty_name = tynm::type_name::<T>();
-        let ty_name = if ty_name.is_empty() {
-            "response".to_string()
-        } else {
-            ty_name
-        };
+        let response_format = ResponseFormat::JsonSchema { json_schema };
 
+        let chat_response = self
+            .chat_with_messages_raw::<T>(messages, response_format)
+            .await?;
+
+        let chat_response: T = serde_json::from_str(&chat_response)
+            .map_err(|e| ChatError::InvalidJson(e, chat_response.clone()))?;
+
+        Ok(chat_response)
+    }
+
+    /// Send a sequence of chat messages to the API. It's called "chat_with_messages_raw" because it allows you to specify any response format, and doesn't attempt to deserialize the chat completion.
+    pub async fn chat_with_messages_raw<T: DeserializeOwned + JsonSchema>(
+        &self,
+        messages: Vec<ChatMessage>,
+        response_format: ResponseFormat,
+    ) -> Result<String, ChatError> {
         let chat_request = ChatRequest {
             model: self.model.clone(),
             messages,
-            response_format: ResponseFormat {
-                format_type: "json_schema".to_string(),
-                json_schema: JsonSchemaFormat {
-                    name: ty_name,
-                    strict: true,
-                    schema: SchemaFormat {
-                        additional_properties: false,
-                        schema,
-                    },
-                },
-            },
+            response_format,
         };
 
         let chat_request_str = serde_json::to_string(&chat_request).unwrap();
@@ -374,9 +426,6 @@ impl ChatClient {
             .message
             .content
             .clone();
-
-        let chat_response: T = serde_json::from_str(&chat_response)
-            .map_err(|e| ChatError::InvalidJson(e, chat_response.clone()))?;
 
         Ok(chat_response)
     }
