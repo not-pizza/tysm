@@ -78,7 +78,7 @@ I'm a big fan of memoization. By default, the last 1024 responses will be stored
 
 ```rust
 use std::sync::LazyLock;
-use tysm::ChatClient;
+use tysm::chat_completions::ChatClient;
 
 // Create a lazily-initialized `CLIENT` variable to avoid recreating a `ChatClient` every time we want to hit the API.
 static CLIENT: LazyLock<ChatClient> = LazyLock::new(|| ChatClient::from_env("gpt-4o").unwrap());
