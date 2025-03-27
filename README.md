@@ -1,6 +1,21 @@
 # tysm - Thank You So Much
 
-**Typed OpenAI Chat Completions in Rust**
+**Batteries-included Rust OpenAI Client**
+
+Including...
+
+- **Chat-Completions API**
+  - Type-safe API responses via Structured Outputs
+  - Automatic schema generation
+  - Automatic deserialization
+  - Concise interface
+  - Automatic local caching of API responses
+- **Embeddings API**
+  - Single and batch requests supported
+- **Files API**
+  - Create, List, and Delete files
+
+The **Typed Chat Completions** feature is the most interesting part, so most of this readme will focus on that.
 
 [crates.io](https://crates.io/crates/tysm) | [docs.rs](https://docs.rs/tysm/latest/tysm/) | [blog post](https://chadnauseam.com/coding/ai/openai-structured-outputs-are-really-useful)
 
@@ -8,7 +23,6 @@
 - [tysm - Thank You So Much](#tysm---thank-you-so-much)
   - [Table of Contents](#table-of-contents)
   - [Usage](#usage)
-  - [Features](#features)
   - [Setup](#setup)
     - [Automatic Caching](#automatic-caching)
     - [Custom API endpoints](#custom-api-endpoints)
@@ -50,14 +64,7 @@ async fn get_president_name() {
 }
 ```
 
-## Features
-
-- Chat-Completions API
-  - Type-safe API responses via Structured Outputs
-  - Concise interface
-  - Automatic local caching of API responses
-- Embeddings API
-  - Single and batch requests supported
+See the `examples/` directory for examples of the embeddings and files APIs.
 
 ## Setup
 
