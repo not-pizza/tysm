@@ -51,3 +51,7 @@ path = "examples/files.rs"
 [[example]]
 name = "batch-completions"
 path = "examples/batch_completions.rs"
+
+[[example]]
+name = "batch-completions-low-level"
+path = "examples/batch_completions_low_level.rs"

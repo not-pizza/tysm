@@ -34,6 +34,7 @@ Where `<example_name>` is one of:
 - `embeddings`
 - `files`
 - `batch-completions`
+- `batch-completions-low-level`
 
 ## Examples Overview
 

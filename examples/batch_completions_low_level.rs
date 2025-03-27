@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use serde_json::json;
 use tysm::chat_completions::{
     batch::{BatchClient, BatchRequestItem},
@@ -49,8 +51,21 @@ async fn main() -> anyhow::Result<()> {
 
     // Create a batch
     println!("Creating batch...");
-    let batch = batch_client.create_batch(file_id).await?;
+    let batch = batch_client
+        .create_batch(
+            file_id,
+            Some(HashMap::from([(
+                "name".to_string(),
+                "My Batch".to_string(),
+            )])),
+        )
+        .await?;
     println!("Batch created with ID: {}", batch.id);
+
+    // List all batches
+    println!("Listing all batches...");
+    let batches = batch_client.list_batches().await?;
+    println!("Batches: {:?}", batches.len());
 
     // Check batch status
     println!("Checking batch status...");

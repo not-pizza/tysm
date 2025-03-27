@@ -632,6 +632,7 @@ pub mod batch {
     use reqwest::Client;
     use serde::{Deserialize, Serialize};
     use serde_json::Value;
+    use std::collections::HashMap;
     use std::io::Write;
 
     use std::time::Duration;
@@ -665,7 +666,7 @@ pub mod batch {
                 api_key: client.api_key.clone(),
                 base_url: client.base_url.clone(),
                 batches_path: "batches/".to_string(),
-                endpoint: "v1/chat/completions".to_string(),
+                endpoint: "/v1/chat/completions".to_string(),
                 model: client.model.clone(),
                 files_client: FilesClient::from(client),
             }
@@ -802,7 +803,7 @@ pub mod batch {
         /// The number of requests in the batch.
         pub request_counts: BatchRequestCounts,
         /// Custom metadata for the batch.
-        pub metadata: Option<Value>,
+        pub metadata: Option<HashMap<String, String>>,
     }
 
     /// The number of requests in a batch.
@@ -938,6 +939,7 @@ pub mod batch {
         pub async fn create_batch(
             &self,
             input_file_id: impl AsRef<str>,
+            metadata: Option<HashMap<String, String>>,
         ) -> Result<Batch, BatchError> {
             let client = Client::new();
             let url = remove_trailing_slash(self.batches_url());
@@ -948,7 +950,8 @@ pub mod batch {
                 .json(&serde_json::json!({
                     "input_file_id": input_file_id.as_ref(),
                     "endpoint": &self.endpoint,
-                    "completion_window": "24h"
+                    "completion_window": "24h",
+                    "metadata": metadata,
                 }))
                 .send()
                 .await?;
@@ -1109,42 +1112,40 @@ pub mod batch {
         }
 
         /// List all batches.
-        /// 
+        ///
         /// This method will automatically handle pagination by repeatedly calling
         /// `list_batches_limited` until all batches have been retrieved.
-        pub async fn list_batches(&self) -> Result<BatchList, BatchError> {
+        pub async fn list_batches(&self) -> Result<Vec<Batch>, BatchError> {
             let mut all_batches = Vec::new();
             let mut last_batch_id = None;
-            
+
             loop {
-                let batch_list = self.list_batches_limited(Some(100), last_batch_id.as_deref()).await?;
-                
+                let batch_list = self
+                    .list_batches_limited(None, last_batch_id.as_deref())
+                    .await?;
+
                 if batch_list.data.is_empty() {
                     break;
                 }
-                
+
                 // Get the ID of the last batch for pagination
                 if let Some(last_batch) = batch_list.data.last() {
                     last_batch_id = Some(last_batch.id.clone());
                 }
-                
+
                 all_batches.extend(batch_list.data);
-                
+
                 // If there are no more batches, break
                 if !batch_list.has_more {
                     break;
                 }
             }
-            
-            Ok(BatchList {
-                data: all_batches,
-                object: "list".to_string(),
-                has_more: false,
-            })
+
+            Ok(all_batches)
         }
 
         /// List all batches.
-        pub async fn list_batches_limited(
+        async fn list_batches_limited(
             &self,
             limit: Option<u32>,
             after: Option<&str>,
@@ -1165,7 +1166,7 @@ pub mod batch {
 
             let client = Client::new();
             let response = client
-                .get(url)
+                .get(remove_trailing_slash(url))
                 .header("Authorization", format!("Bearer {}", self.api_key))
                 .header("Content-Type", "application/json")
                 .send()
