@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use serde_json::json;
 use tysm::{
     batch::{BatchClient, BatchRequestItem},
-    chat_completions::ChatClient,
+    chat_completions::{ChatClient, ChatMessage, ChatRequest, ResponseFormat},
 };
 
 #[tokio::main]
@@ -18,34 +18,43 @@ async fn main() -> anyhow::Result<()> {
     let requests = vec![
         BatchRequestItem::new_chat(
             "request-1",
-            "gpt-3.5-turbo",
-            vec![
-                json!({"role": "system", "content": "You are a helpful assistant."}),
-                json!({"role": "user", "content": "What is the capital of France?"}),
-            ],
+            ChatRequest {
+                model: "gpt-3.5-turbo".to_string(),
+                messages: vec![
+                    ChatMessage::system("You are a helpful assistant."),
+                    ChatMessage::user("What is the capital of France?"),
+                ],
+                response_format: ResponseFormat::Text,
+            },
         ),
         BatchRequestItem::new_chat(
             "request-2",
-            "gpt-3.5-turbo",
-            vec![
-                json!({"role": "system", "content": "You are a helpful assistant."}),
-                json!({"role": "user", "content": "What is the capital of Japan?"}),
-            ],
+            ChatRequest {
+                model: "gpt-3.5-turbo".to_string(),
+                messages: vec![
+                    ChatMessage::system("You are a helpful assistant."),
+                    ChatMessage::user("What is the capital of Japan?"),
+                ],
+                response_format: ResponseFormat::Text,
+            },
         ),
         BatchRequestItem::new_chat(
             "request-3",
-            "gpt-3.5-turbo",
-            vec![
-                json!({"role": "system", "content": "You are a helpful assistant."}),
-                json!({"role": "user", "content": "What is the capital of Italy?"}),
-            ],
+            ChatRequest {
+                model: "gpt-3.5-turbo".to_string(),
+                messages: vec![
+                    ChatMessage::system("You are a helpful assistant."),
+                    ChatMessage::user("What is the capital of Italy?"),
+                ],
+                response_format: ResponseFormat::Text,
+            },
         ),
     ];
 
     // Create a batch file
     println!("Creating batch file...");
     let file_id = batch_client
-        .create_batch_file("capitals_batch.jsonl", &requests)
+        .upload_batch_file("capitals_batch.jsonl", &requests)
         .await?;
     println!("Batch file created with ID: {}", file_id);
 

@@ -69,6 +69,43 @@ pub struct ChatMessage {
     pub content: Vec<ChatMessageContent>,
 }
 
+impl ChatMessage {
+    /// Create a new [`ChatMessage`].
+    pub fn new(role: Role, content: Vec<ChatMessageContent>) -> Self {
+        Self { role, content }
+    }
+
+    /// Create a new [`ChatMessage`] with the user role.
+    pub fn user(content: impl Into<String>) -> Self {
+        Self {
+            role: Role::User,
+            content: vec![ChatMessageContent::Text {
+                text: content.into(),
+            }],
+        }
+    }
+
+    /// Create a new [`ChatMessage`] with the assistant role.
+    pub fn assistant(content: impl Into<String>) -> Self {
+        Self {
+            role: Role::Assistant,
+            content: vec![ChatMessageContent::Text {
+                text: content.into(),
+            }],
+        }
+    }
+
+    /// Create a new [`ChatMessage`] with the system role.
+    pub fn system(content: impl Into<String>) -> Self {
+        Self {
+            role: Role::System,
+            content: vec![ChatMessageContent::Text {
+                text: content.into(),
+            }],
+        }
+    }
+}
+
 /// The content of a message.
 ///
 /// Currently, only text and image URLs are supported.
@@ -116,7 +153,6 @@ pub struct ChatRequest {
     /// The messages to send to the API.
     pub messages: Vec<ChatMessage>,
     /// The response format to use for the ChatGPT API.
-    #[allow(private_interfaces)]
     pub response_format: ResponseFormat,
 }
 
@@ -468,7 +504,7 @@ impl ChatClient {
         let response_format = ResponseFormat::JsonSchema { json_schema };
 
         let chat_response = self
-            .chat_with_messages_raw::<T>(messages, response_format)
+            .chat_with_messages_raw(messages, response_format)
             .await?;
 
         let chat_response: T = serde_json::from_str(&chat_response)
@@ -478,7 +514,7 @@ impl ChatClient {
     }
 
     /// Send a sequence of chat messages to the API. It's called "chat_with_messages_raw" because it allows you to specify any response format, and doesn't attempt to deserialize the chat completion.
-    pub async fn chat_with_messages_raw<T: DeserializeOwned + JsonSchema>(
+    pub async fn chat_with_messages_raw(
         &self,
         messages: Vec<ChatMessage>,
         response_format: ResponseFormat,
@@ -530,6 +566,34 @@ impl ChatClient {
 
         Ok(chat_response)
     }
+
+    /*/// Send many chat requests via the batch API.
+    pub async fn batch_chat_with_messages_raw(
+        &self,
+        prompts: Vec<(Vec<ChatMessage>, ResponseFormat)>,
+    ) -> Result<String, ChatError> {
+        use crate::batch::{BatchClient, BatchRequestItem};
+
+        let batch_client = BatchClient::from(self);
+
+        let requests = prompts
+            .into_iter()
+            .map(|(messages, response_format)| {
+                BatchRequestItem::new_chat("request-1", self.model.clone(), messages)
+            })
+            .collect();
+
+        // Create the batch content
+        let content = batch_client.create_batch_content(requests);
+
+        // Upload the content directly
+        let file_obj = batch_client
+            .files_client
+            .upload_bytes(filename.as_ref(), content, FilePurpose::Batch)
+            .await?;
+
+        todo!()
+    }*/
 
     async fn chat_cached(&self, chat_request: &ChatRequest) -> Option<String> {
         let chat_request = serde_json::to_string(chat_request).ok()?;

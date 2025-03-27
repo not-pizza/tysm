@@ -3,57 +3,7 @@
 //! The Batch API allows you to send asynchronous groups of requests with 50% lower costs,
 //! a separate pool of significantly higher rate limits, and a clear 24-hour turnaround time.
 //!
-//! # Example
-//!
-//! ```rust,no_run
-//! # use tysm::{batch::{BatchClient, BatchRequestItem}, chat_completions::ChatClient};
-//! # use serde_json::json;
-//! # use tokio_test::block_on;
-//! # use std::collections::HashMap;
-//! # block_on(async {
-//! let client = ChatClient::from_env("gpt-4o").unwrap();
-//! let batch_client = BatchClient::from(&client);
-//!
-//! // Create batch requests
-//! let requests = vec![
-//!     BatchRequestItem::new_chat(
-//!         "request-1",
-//!         "gpt-4o",
-//!         vec![
-//!             json!({"role": "system", "content": "You are a helpful assistant."}),
-//!             json!({"role": "user", "content": "Hello world!"}),
-//!         ],
-//!     ),
-//!     BatchRequestItem::new_chat(
-//!         "request-2",
-//!         "gpt-4o",
-//!         vec![
-//!             json!({"role": "system", "content": "You are an unhelpful assistant."}),
-//!             json!({"role": "user", "content": "Hello world!"}),
-//!         ],
-//!     ),
-//! ];
-//!
-//! // Create a batch file
-//! let file_id = batch_client.create_batch_file("my_batch.jsonl", &requests).await.unwrap();
-//!
-//! // Create a batch
-//! let batch = batch_client.create_batch(file_id, /* metadata */ HashMap::new()).await.unwrap();
-//! println!("Batch created: {}", batch.id);
-//!
-//! // Check batch status
-//! let status = batch_client.get_batch_status(&batch.id).await.unwrap();
-//! println!("Batch status: {}", status.status);
-//!
-//! // Wait for batch to complete
-//! let completed_batch = batch_client.wait_for_batch(&batch.id).await.unwrap();
-//!
-//! // Get batch results
-//! let results = batch_client.get_batch_results(&completed_batch).await.unwrap();
-//! for result in results {
-//!     println!("Result for {}: {}", result.custom_id, result.response.unwrap().body);
-//! }
-//! # });
+//! See the examples/ for more information.
 //! ```
 
 use reqwest::Client;
@@ -66,7 +16,7 @@ use std::time::Duration;
 use thiserror::Error;
 use tokio::time::sleep;
 
-use crate::chat_completions::{ChatClient, ChatError};
+use crate::chat_completions::{ChatClient, ChatError, ChatRequest};
 use crate::files::{FilePurpose, FilesClient, FilesError};
 use crate::utils::remove_trailing_slash;
 use crate::OpenAiError;
@@ -132,8 +82,13 @@ pub enum BatchError {
     BatchExpired(String),
 
     /// The batch has failed.
-    #[error("Batch failed: {0}")]
-    BatchFailed(String),
+    #[error("Batch {id} failed: {error}")]
+    BatchFailed {
+        /// The ID of the batch.
+        id: String,
+        /// The error message.
+        error: String,
+    },
 
     /// The batch was cancelled.
     #[error("Batch cancelled: {0}")]
@@ -257,20 +212,17 @@ pub struct BatchList {
 
 impl BatchRequestItem {
     /// Create a new batch request item for the chat completions API.
-    pub fn new_chat(
-        custom_id: impl Into<String>,
-        model: impl Into<String>,
-        messages: Vec<Value>,
-    ) -> Self {
+    pub fn new_chat(custom_id: impl Into<String>, chat_request: ChatRequest) -> Self {
+        let body = serde_json::json!({
+            "model": chat_request.model,
+            "messages": chat_request.messages,
+            "response_format": chat_request.response_format,
+        });
         Self {
             custom_id: custom_id.into(),
             method: "POST".to_string(),
             url: "/v1/chat/completions".to_string(),
-            body: serde_json::json!({
-                "model": model.into(),
-                "messages": messages,
-                "max_tokens": 1000,
-            }),
+            body,
         }
     }
 
@@ -334,29 +286,29 @@ impl BatchClient {
     }
 
     /// Create batch file content from a list of batch request items.
-    /// 
+    ///
     /// Returns the serialized JSONL content as bytes.
     pub fn create_batch_content(&self, requests: &[BatchRequestItem]) -> Vec<u8> {
         let mut content = Vec::new();
-        
+
         // Write each request as a JSON line
         for request in requests {
             let json = serde_json::to_string(request).unwrap(); // cannot panic
             writeln!(&mut content, "{}", json).unwrap(); // writing to memory cannot fail
         }
-        
+
         content
     }
 
     /// Create a batch file from a list of batch request items.
-    pub async fn create_batch_file(
+    pub async fn upload_batch_file(
         &self,
         filename: impl AsRef<str>,
         requests: &[BatchRequestItem],
     ) -> Result<String, BatchError> {
         // Create the batch content
         let content = self.create_batch_content(requests);
-        
+
         // Upload the content directly
         let file_obj = self
             .files_client
@@ -440,7 +392,12 @@ impl BatchClient {
 
             match batch.status.as_str() {
                 "completed" => return Ok(batch),
-                "failed" => return Err(BatchError::BatchFailed(batch_id.to_string())),
+                "failed" => {
+                    return Err(BatchError::BatchFailed {
+                        id: batch_id.to_string(),
+                        error: batch.errors.unwrap_or_default().to_string(),
+                    })
+                }
                 "expired" => return Err(BatchError::BatchExpired(batch_id.to_string())),
                 "cancelled" => return Err(BatchError::BatchCancelled(batch_id.to_string())),
                 _ => {

@@ -243,8 +243,9 @@ impl FilesClient {
             .part("file", file_part);
 
         let client = Client::new();
+        let url = remove_trailing_slash(self.files_url());
         let response = client
-            .post(self.files_url())
+            .post(url)
             .header("Authorization", format!("Bearer {}", self.api_key))
             .multipart(form)
             .send()
