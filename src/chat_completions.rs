@@ -1109,8 +1109,38 @@ pub mod batch {
         }
 
         /// List all batches.
+        /// 
+        /// This method will automatically handle pagination by repeatedly calling
+        /// `list_batches_limited` until all batches have been retrieved.
         pub async fn list_batches(&self) -> Result<BatchList, BatchError> {
-            // repeatedly call list_batches_limited until there are no more batches, AI!
+            let mut all_batches = Vec::new();
+            let mut last_batch_id = None;
+            
+            loop {
+                let batch_list = self.list_batches_limited(Some(100), last_batch_id.as_deref()).await?;
+                
+                if batch_list.data.is_empty() {
+                    break;
+                }
+                
+                // Get the ID of the last batch for pagination
+                if let Some(last_batch) = batch_list.data.last() {
+                    last_batch_id = Some(last_batch.id.clone());
+                }
+                
+                all_batches.extend(batch_list.data);
+                
+                // If there are no more batches, break
+                if !batch_list.has_more {
+                    break;
+                }
+            }
+            
+            Ok(BatchList {
+                data: all_batches,
+                object: "list".to_string(),
+                has_more: false,
+            })
         }
 
         /// List all batches.
