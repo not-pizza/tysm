@@ -32,16 +32,22 @@ pub enum FilePurpose {
 #[derive(Debug, Deserialize)]
 pub struct FileObject {
     /// The ID of the file.
+    #[serde(default)]
     pub id: String,
     /// The object type, always "file".
+    #[serde(default)]
     pub object: String,
     /// The size of the file in bytes.
+    #[serde(default)]
     pub bytes: u64,
     /// When the file was created.
+    #[serde(default)]
     pub created_at: u64,
     /// The name of the file.
+    #[serde(default)]
     pub filename: String,
     /// The purpose of the file.
+    #[serde(default)]
     pub purpose: String,
 }
 
@@ -63,7 +69,7 @@ pub enum FilesError {
 
     /// An error occurred when deserializing the response from the API.
     #[error("API returned an error response: {0}")]
-    ApiResponseError(#[from] serde_json::Error),
+    ApiResponseError(serde_json::Error),
 
     /// An error occurred when reading the file.
     #[error("File error: {0}")]
@@ -141,7 +147,16 @@ impl FilesClient {
             .send()
             .await?;
 
-        let file_object = response.json::<FileObject>().await?;
+        // Print the response for debugging
+        let response_text = response.text().await?;
+        println!("API Response: {}", response_text);
+        
+        let file_object: FileObject = serde_json::from_str(&response_text)
+            .map_err(|e| {
+                eprintln!("Failed to parse response: {}", e);
+                FilesError::ApiResponseError(e)
+            })?;
+        
         Ok(file_object)
     }
 
@@ -177,7 +192,16 @@ impl FilesClient {
             .send()
             .await?;
 
-        let file_object = response.json::<FileObject>().await?;
+        // Print the response for debugging
+        let response_text = response.text().await?;
+        println!("API Response: {}", response_text);
+        
+        let file_object: FileObject = serde_json::from_str(&response_text)
+            .map_err(|e| {
+                eprintln!("Failed to parse response: {}", e);
+                FilesError::ApiResponseError(e)
+            })?;
+        
         Ok(file_object)
     }
 
