@@ -1,7 +1,9 @@
+use std::collections::HashMap;
+
 use serde_json::json;
-use tysm::chat_completions::{
+use tysm::{
     batch::{BatchClient, BatchRequestItem},
-    ChatClient,
+    chat_completions::ChatClient,
 };
 
 #[tokio::main]
@@ -49,7 +51,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Create a batch
     println!("Creating batch...");
-    let batch = batch_client.create_batch(file_id).await?;
+    let batch = batch_client.create_batch(file_id, HashMap::new()).await?;
     println!("Batch created with ID: {}", batch.id);
 
     // Check batch status

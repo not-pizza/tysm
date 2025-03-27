@@ -44,6 +44,7 @@
 
 #![deny(missing_docs)]
 
+pub mod batch;
 pub mod chat_completions;
 pub mod embeddings;
 pub mod files;

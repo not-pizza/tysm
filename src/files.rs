@@ -345,12 +345,12 @@ impl FilesClient {
     /// ```
     pub async fn download_file(&self, file_id: &str) -> Result<String, FilesError> {
         let client = Client::new();
+        let url = self
+            .files_url()
+            .join(&format!("{file_id}/content"))
+            .unwrap();
         let response = client
-            .get(
-                self.files_url()
-                    .join(&format!("{file_id}/content"))
-                    .unwrap(),
-            )
+            .get(url)
             .header("Authorization", format!("Bearer {}", self.api_key))
             .send()
             .await?;
