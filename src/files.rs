@@ -1,7 +1,7 @@
 //! Files API for interacting with OpenAI's file management endpoints.
 //! This module provides a client for uploading, listing, retrieving, and deleting files.
 
-use reqwest::{Client, multipart};
+use reqwest::{multipart, Client};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use thiserror::Error;
