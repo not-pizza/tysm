@@ -102,7 +102,7 @@ impl FilesClient {
         Ok(Self::new(api_key()?))
     }
 
-    /// Upload a file to the OpenAI API.
+    /// Upload a file to the OpenAI API from a file path.
     ///
     /// ```rust,no_run
     /// # use tysm::files::{FilesClient, FilePurpose};
@@ -128,6 +128,43 @@ impl FilesClient {
         let stream = FramedRead::new(file, BytesCodec::new());
         let file_part = multipart::Part::stream(reqwest::Body::wrap_stream(stream))
             .file_name(file_name.to_string());
+
+        let form = multipart::Form::new()
+            .text("purpose", format!("{:?}", purpose).to_lowercase())
+            .part("file", file_part);
+
+        let client = Client::new();
+        let response = client
+            .post(format!("{}/files", self.base_url))
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .multipart(form)
+            .send()
+            .await?;
+
+        let file_object = response.json::<FileObject>().await?;
+        Ok(file_object)
+    }
+
+    /// Upload file content directly from bytes to the OpenAI API.
+    ///
+    /// ```rust,no_run
+    /// # use tysm::files::{FilesClient, FilePurpose};
+    /// # use tokio_test::block_on;
+    /// # block_on(async {
+    /// let client = FilesClient::from_env().unwrap();
+    /// let content = "{ \"prompt\": \"example\", \"completion\": \"response\" }\n".as_bytes().to_vec();
+    /// let file = client.upload_bytes("mydata.jsonl", content, FilePurpose::FineTune).await.unwrap();
+    /// println!("Uploaded file: {}", file.id);
+    /// # });
+    /// ```
+    pub async fn upload_bytes(
+        &self,
+        filename: &str,
+        bytes: Vec<u8>,
+        purpose: FilePurpose,
+    ) -> Result<FileObject, FilesError> {
+        let file_part = multipart::Part::bytes(bytes)
+            .file_name(filename.to_string());
 
         let form = multipart::Form::new()
             .text("purpose", format!("{:?}", purpose).to_lowercase())
