@@ -231,6 +231,28 @@ pub struct ChatUsage {
     pub completion_tokens: u32,
     /// The total number of tokens used.
     pub total_tokens: u32,
+
+    /// Details about the prompt tokens (such as whether they were cached).
+    #[serde(default)]
+    pub prompt_token_details: Option<PromptTokenDetails>,
+    /// Details about the completion tokens for reasoning models
+    #[serde(default)]
+    pub completion_token_details: Option<CompletionTokenDetails>,
+}
+
+/// Includes details about the prompt tokens.
+/// Currently, only contains the number of cached tokens.
+#[derive(Deserialize, Debug, Default, Clone, Copy, Eq, PartialEq)]
+pub struct PromptTokenDetails {
+    cached_tokens: u32,
+}
+
+/// Includes details about the completion tokens for reasoning models
+#[derive(Deserialize, Debug, Default, Clone, Copy, Eq, PartialEq)]
+pub struct CompletionTokenDetails {
+    reasoning_tokens: u32,
+    accepted_prediction_tokens: u32,
+    rejected_prediction_tokens: u32,
 }
 
 impl std::ops::AddAssign for ChatUsage {
