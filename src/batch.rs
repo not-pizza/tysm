@@ -333,6 +333,7 @@ impl BatchClient {
         self.base_url.join(&self.batches_path).unwrap()
     }
 
+    // I'd rather this return Vec<u8> rather than actually writing to a file, AI!
     /// Create a batch file from a list of batch request items.
     pub async fn create_batch_file(
         &self,
