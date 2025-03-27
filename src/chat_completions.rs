@@ -11,7 +11,6 @@ use schemars::{schema_for, transform::Transform, JsonSchema, Schema};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::files::{FileObject, FilePurpose, FilesClient};
 use crate::schema::OpenAiTransform;
 use crate::utils::{api_key, OpenAiApiKeyError};
 use crate::OpenAiError;
@@ -76,13 +75,13 @@ pub mod batch {
     use serde::{Deserialize, Serialize};
     use serde_json::Value;
     use std::io::Write;
-    use std::path::Path;
+
     use std::time::Duration;
     use thiserror::Error;
     use tokio::time::sleep;
 
     use super::*;
-    use crate::files::{FileObject, FilePurpose, FilesClient, FilesError};
+    use crate::files::{FilePurpose, FilesClient, FilesError};
     use crate::utils::remove_trailing_slash;
     use crate::OpenAiError;
 
@@ -954,9 +953,9 @@ impl ChatClient {
     /// ```rust
     /// # use tysm::chat_completions::ChatClient;
     /// #  let client = {
-    /// #     let my_api = "https://g7edusstdonmn3vxdh3qdypkrq0wzttx.lambda-url.us-east-1.on.aws/v1/chat/completions".to_string();
+    /// #     let my_api = url::Url::parse("https://g7edusstdonmn3vxdh3qdypkrq0wzttx.lambda-url.us-east-1.on.aws/v1/").unwrap();
     /// #     ChatClient {
-    /// #         url: my_api,
+    /// #         base_url: my_api,
     /// #         ..ChatClient::from_env("gpt-4o").unwrap()
     /// #     }
     /// # };
