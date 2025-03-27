@@ -1,10 +1,10 @@
 //! Chat completions are the most common way to interact with the OpenAI API.
 //! This module provides a client for interacting with the ChatGPT API.
-//! 
+//!
 //! It also provides a batch API for processing large numbers of requests asynchronously.
 
-use std::sync::RwLock;
 use std::path::Path;
+use std::sync::RwLock;
 
 use lru::LruCache;
 use reqwest::Client;
@@ -12,26 +12,25 @@ use schemars::{schema_for, transform::Transform, JsonSchema, Schema};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::files::{FileObject, FilePurpose, FilesClient};
 use crate::schema::OpenAiTransform;
 use crate::utils::{api_key, OpenAiApiKeyError};
 use crate::OpenAiError;
-use crate::files::{FilesClient, FilePurpose, FileObject};
 
 /// Batch API for processing large numbers of requests asynchronously.
-/// 
+///
 /// The Batch API allows you to send asynchronous groups of requests with 50% lower costs,
 /// a separate pool of significantly higher rate limits, and a clear 24-hour turnaround time.
-/// 
+///
 /// # Example
-/// 
+///
 /// ```rust,no_run
 /// # use tysm::chat_completions::{ChatClient, batch::BatchRequestItem};
 /// # use serde_json::json;
 /// # use tokio_test::block_on;
 /// # block_on(async {
-/// # let client = ChatClient::from_env("gpt-4o").unwrap();
-/// let batch_client = client.batch();
-/// 
+/// let client = ChatClient::from_env("gpt-4o").unwrap();
+///
 /// // Create batch requests
 /// let requests = vec![
 ///     BatchRequestItem::new_chat(
@@ -51,41 +50,41 @@ use crate::files::{FilesClient, FilePurpose, FileObject};
 ///         ],
 ///     ),
 /// ];
-/// 
+///
 /// // Create a batch file
-/// let file_id = batch_client.create_batch_file("my_batch.jsonl", &requests).await.unwrap();
-/// 
+/// let file_id = client.create_batch_file("my_batch.jsonl", &requests).await.unwrap();
+///
 /// // Create a batch
-/// let batch = batch_client.create_batch(file_id, "/v1/chat/completions").await.unwrap();
+/// let batch = client.create_batch(file_id, "/v1/chat/completions").await.unwrap();
 /// println!("Batch created: {}", batch.id);
-/// 
+///
 /// // Check batch status
-/// let status = batch_client.get_batch_status(&batch.id).await.unwrap();
+/// let status = client.get_batch_status(&batch.id).await.unwrap();
 /// println!("Batch status: {}", status.status);
-/// 
+///
 /// // Wait for batch to complete
-/// let completed_batch = batch_client.wait_for_batch(&batch.id).await.unwrap();
-/// 
+/// let completed_batch = client.wait_for_batch(&batch.id).await.unwrap();
+///
 /// // Get batch results
-/// let results = batch_client.get_batch_results(&completed_batch).await.unwrap();
+/// let results = client.get_batch_results(&completed_batch).await.unwrap();
 /// for result in results {
-///     println!("Result for {}: {}", result.custom_id, result.response.body);
+///     println!("Result for {}: {}", result.custom_id, result.response.unwrap().body);
 /// }
 /// # });
 /// ```
 pub mod batch {
-    use std::path::Path;
-    use std::time::Duration;
-    use std::io::Write;
     use reqwest::Client;
     use serde::{Deserialize, Serialize};
     use serde_json::Value;
+    use std::io::Write;
+    use std::path::Path;
+    use std::time::Duration;
     use thiserror::Error;
     use tokio::time::sleep;
-    
+
+    use super::*;
+    use crate::files::{FileObject, FilePurpose, FilesClient, FilesError};
     use crate::OpenAiError;
-    use crate::files::{FilesClient, FilePurpose, FileObject, FilesError};
-    use super::ChatError;
 
     /// Errors that can occur when interacting with the Batch API.
     #[derive(Error, Debug)]
@@ -133,16 +132,6 @@ pub mod batch {
         /// Other batch error.
         #[error("Batch error: {0}")]
         Other(String),
-    }
-
-    /// A client for interacting with the OpenAI Batch API.
-    pub struct BatchClient {
-        /// The API key to use for the OpenAI API.
-        pub api_key: String,
-        /// The base URL of the OpenAI API.
-        pub url: String,
-        /// The files client for uploading and downloading files.
-        pub files_client: FilesClient,
     }
 
     /// A request item for a batch.
@@ -325,23 +314,15 @@ pub mod batch {
         }
     }
 
-    impl BatchClient {
-        /// Create a new [`BatchClient`].
-        pub fn new(api_key: impl Into<String>) -> Self {
-            let api_key = api_key.into();
-            Self {
-                api_key: api_key.clone(),
-                url: "https://api.openai.com/v1".into(),
-                files_client: FilesClient::new(api_key),
-            }
-        }
-
+    impl ChatClient {
         /// Create a batch file from a list of batch request items.
         pub async fn create_batch_file(
             &self,
             filename: impl AsRef<str>,
             requests: &[BatchRequestItem],
         ) -> Result<String, BatchError> {
+            let files_client = FilesClient::from(self);
+
             // Create a temporary file
             let temp_path = std::env::temp_dir().join(filename.as_ref());
             let mut file = std::fs::File::create(&temp_path)?;
@@ -354,8 +335,10 @@ pub mod batch {
             file.flush()?;
 
             // Upload the file
-            let file_obj = self.files_client.upload_file(&temp_path, FilePurpose::Batch).await?;
-            
+            let file_obj = files_client
+                .upload_file(&temp_path, FilePurpose::Batch)
+                .await?;
+
             // Clean up the temporary file
             std::fs::remove_file(temp_path)?;
 
@@ -383,7 +366,7 @@ pub mod batch {
 
             let response_text = response.text().await?;
             let batch: Result<Batch, serde_json::Error> = serde_json::from_str(&response_text);
-            
+
             match batch {
                 Ok(batch) => Ok(batch),
                 Err(e) => {
@@ -409,7 +392,7 @@ pub mod batch {
 
             let response_text = response.text().await?;
             let batch: Result<Batch, serde_json::Error> = serde_json::from_str(&response_text);
-            
+
             match batch {
                 Ok(batch) => Ok(batch),
                 Err(e) => {
@@ -424,16 +407,13 @@ pub mod batch {
         }
 
         /// Wait for a batch to complete.
-        pub async fn wait_for_batch(
-            &self,
-            batch_id: &str,
-        ) -> Result<Batch, BatchError> {
+        pub async fn wait_for_batch(&self, batch_id: &str) -> Result<Batch, BatchError> {
             let mut attempts = 0;
             let max_attempts = 100; // Limit the number of attempts to avoid infinite loops
-            
+
             loop {
                 let batch = self.get_batch_status(batch_id).await?;
-                
+
                 match batch.status.as_str() {
                     "completed" => return Ok(batch),
                     "failed" => return Err(BatchError::BatchFailed(batch_id.to_string())),
@@ -445,7 +425,7 @@ pub mod batch {
                         if attempts >= max_attempts {
                             return Err(BatchError::BatchTimeout(batch_id.to_string()));
                         }
-                        
+
                         // Exponential backoff with a cap
                         let delay = std::cmp::min(30, 2_u64.pow(attempts)) as u64;
                         sleep(Duration::from_secs(delay)).await;
@@ -455,38 +435,55 @@ pub mod batch {
         }
 
         /// Get the results of a batch.
-        pub async fn get_batch_results(&self, batch: &Batch) -> Result<Vec<BatchResponseItem>, BatchError> {
+        pub async fn get_batch_results(
+            &self,
+            batch: &Batch,
+        ) -> Result<Vec<BatchResponseItem>, BatchError> {
+            let files_client = FilesClient::from(self);
+
             if batch.status != "completed" {
-                return Err(BatchError::Other(format!("Batch is not completed: {}", batch.status)));
+                return Err(BatchError::Other(format!(
+                    "Batch is not completed: {}",
+                    batch.status
+                )));
             }
 
-            let output_file_id = batch.output_file_id.as_ref()
+            let output_file_id = batch
+                .output_file_id
+                .as_ref()
                 .ok_or_else(|| BatchError::Other("Batch has no output file".to_string()))?;
 
-            let content = self.files_client.download_file(output_file_id).await?;
-            
+            let content = files_client.download_file(output_file_id).await?;
+
             let mut results = Vec::new();
             for line in content.lines() {
                 let result: BatchResponseItem = serde_json::from_str(line)?;
                 results.push(result);
             }
-            
+
             Ok(results)
         }
 
         /// Get the errors of a batch.
-        pub async fn get_batch_errors(&self, batch: &Batch) -> Result<Vec<BatchResponseItem>, BatchError> {
-            let error_file_id = batch.error_file_id.as_ref()
+        pub async fn get_batch_errors(
+            &self,
+            batch: &Batch,
+        ) -> Result<Vec<BatchResponseItem>, BatchError> {
+            let files_client = FilesClient::from(self);
+
+            let error_file_id = batch
+                .error_file_id
+                .as_ref()
                 .ok_or_else(|| BatchError::Other("Batch has no error file".to_string()))?;
 
-            let content = self.files_client.download_file(error_file_id).await?;
-            
+            let content = files_client.download_file(error_file_id).await?;
+
             let mut errors = Vec::new();
             for line in content.lines() {
                 let error: BatchResponseItem = serde_json::from_str(line)?;
                 errors.push(error);
             }
-            
+
             Ok(errors)
         }
 
@@ -502,7 +499,7 @@ pub mod batch {
 
             let response_text = response.text().await?;
             let batch: Result<Batch, serde_json::Error> = serde_json::from_str(&response_text);
-            
+
             match batch {
                 Ok(batch) => Ok(batch),
                 Err(e) => {
@@ -517,9 +514,13 @@ pub mod batch {
         }
 
         /// List all batches.
-        pub async fn list_batches(&self, limit: Option<u32>, after: Option<&str>) -> Result<BatchList, BatchError> {
+        pub async fn list_batches(
+            &self,
+            limit: Option<u32>,
+            after: Option<&str>,
+        ) -> Result<BatchList, BatchError> {
             let mut url = format!("{}/batches", self.url);
-            
+
             // Add query parameters
             let mut query_params = Vec::new();
             if let Some(limit) = limit {
@@ -528,7 +529,7 @@ pub mod batch {
             if let Some(after) = after {
                 query_params.push(format!("after={}", after));
             }
-            
+
             if !query_params.is_empty() {
                 url = format!("{}?{}", url, query_params.join("&"));
             }
@@ -542,8 +543,9 @@ pub mod batch {
                 .await?;
 
             let response_text = response.text().await?;
-            let batch_list: Result<BatchList, serde_json::Error> = serde_json::from_str(&response_text);
-            
+            let batch_list: Result<BatchList, serde_json::Error> =
+                serde_json::from_str(&response_text);
+
             match batch_list {
                 Ok(batch_list) => Ok(batch_list),
                 Err(e) => {
@@ -585,19 +587,6 @@ pub struct ChatClient {
     pub lru: RwLock<LruCache<String, String>>,
     /// This client's token consumption (as reported by the API).
     pub usage: RwLock<ChatUsage>,
-}
-
-impl ChatClient {
-    /// Create a batch client for processing large numbers of requests asynchronously.
-    /// 
-    /// ```rust
-    /// # use tysm::chat_completions::ChatClient;
-    /// # let client = ChatClient::from_env("gpt-4o").unwrap();
-    /// let batch_client = client.batch();
-    /// ```
-    pub fn batch(&self) -> batch::BatchClient {
-        batch::BatchClient::new(self.api_key.clone())
-    }
 }
 
 /// The role of a message.
@@ -1154,8 +1143,8 @@ fn test_deser() {
 
 #[cfg(test)]
 mod batch_tests {
-    use super::*;
     use super::batch::*;
+    use super::*;
     use serde_json::json;
 
     #[test]

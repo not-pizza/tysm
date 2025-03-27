@@ -21,11 +21,11 @@ pub struct FilesClient {
     pub url: String,
 }
 
-impl From<crate::chat_completions::ChatClient> for FilesClient {
-    fn from(client: crate::chat_completions::ChatClient) -> Self {
+impl From<&crate::chat_completions::ChatClient> for FilesClient {
+    fn from(client: &crate::chat_completions::ChatClient) -> Self {
         Self {
-            api_key: client.api_key,
-            url: client.url,
+            api_key: client.api_key.clone(),
+            url: client.url.clone(),
         }
     }
 }
