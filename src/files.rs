@@ -1,0 +1,252 @@
+//! Files API for interacting with OpenAI's file management endpoints.
+//! This module provides a client for uploading, listing, retrieving, and deleting files.
+
+use reqwest::{Client, multipart};
+use serde::{Deserialize, Serialize};
+use std::path::Path;
+use thiserror::Error;
+use tokio::fs::File;
+use tokio_util::codec::{BytesCodec, FramedRead};
+
+use crate::utils::{api_key, OpenAiApiKeyError};
+
+/// A client for interacting with the OpenAI Files API.
+pub struct FilesClient {
+    /// The API key to use for the OpenAI API.
+    pub api_key: String,
+    /// The base URL of the OpenAI API.
+    pub base_url: String,
+}
+
+/// The purpose of a file in the OpenAI API.
+#[derive(Debug, Serialize, Clone, Copy)]
+#[serde(rename_all = "snake_case")]
+pub enum FilePurpose {
+    /// For fine-tuning models
+    FineTune,
+    /// For assistants
+    Assistants,
+}
+
+/// A file in the OpenAI API.
+#[derive(Debug, Deserialize)]
+pub struct FileObject {
+    /// The ID of the file.
+    pub id: String,
+    /// The object type, always "file".
+    pub object: String,
+    /// The size of the file in bytes.
+    pub bytes: u64,
+    /// When the file was created.
+    pub created_at: u64,
+    /// The name of the file.
+    pub filename: String,
+    /// The purpose of the file.
+    pub purpose: String,
+}
+
+/// A list of files in the OpenAI API.
+#[derive(Debug, Deserialize)]
+pub struct FileList {
+    /// The list of files.
+    pub data: Vec<FileObject>,
+    /// The object type, always "list".
+    pub object: String,
+}
+
+/// Errors that can occur when interacting with the Files API.
+#[derive(Error, Debug)]
+pub enum FilesError {
+    /// An error occurred when sending the request to the API.
+    #[error("Request error: {0}")]
+    RequestError(#[from] reqwest::Error),
+
+    /// An error occurred when deserializing the response from the API.
+    #[error("API returned an error response: {0}")]
+    ApiResponseError(#[from] serde_json::Error),
+
+    /// An error occurred when reading the file.
+    #[error("File error: {0}")]
+    FileError(#[from] std::io::Error),
+
+    /// The file path is invalid.
+    #[error("Invalid file path")]
+    InvalidFilePath,
+}
+
+impl FilesClient {
+    /// Create a new [`FilesClient`].
+    /// If the API key is in the environment, you can use the [`Self::from_env`] method instead.
+    ///
+    /// ```rust
+    /// use tysm::files::FilesClient;
+    ///
+    /// let client = FilesClient::new("sk-1234567890");
+    /// ```
+    pub fn new(api_key: impl Into<String>) -> Self {
+        Self {
+            api_key: api_key.into(),
+            base_url: "https://api.openai.com/v1".into(),
+        }
+    }
+
+    /// Create a new [`FilesClient`].
+    /// This will use the `OPENAI_API_KEY` environment variable to set the API key.
+    /// It will also look in the `.env` file for an `OPENAI_API_KEY` variable (using dotenv).
+    ///
+    /// ```rust
+    /// # use tysm::files::FilesClient;
+    /// let client = FilesClient::from_env().unwrap();
+    /// ```
+    pub fn from_env() -> Result<Self, OpenAiApiKeyError> {
+        Ok(Self::new(api_key()?))
+    }
+
+    /// Upload a file to the OpenAI API.
+    ///
+    /// ```rust,no_run
+    /// # use tysm::files::{FilesClient, FilePurpose};
+    /// # use tokio_test::block_on;
+    /// # block_on(async {
+    /// let client = FilesClient::from_env().unwrap();
+    /// let file = client.upload_file("mydata.jsonl", FilePurpose::FineTune).await.unwrap();
+    /// println!("Uploaded file: {}", file.id);
+    /// # });
+    /// ```
+    pub async fn upload_file(
+        &self,
+        file_path: impl AsRef<Path>,
+        purpose: FilePurpose,
+    ) -> Result<FileObject, FilesError> {
+        let file_path = file_path.as_ref();
+        let file_name = file_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or(FilesError::InvalidFilePath)?;
+
+        let file = File::open(file_path).await?;
+        let stream = FramedRead::new(file, BytesCodec::new());
+        let file_part = multipart::Part::stream(reqwest::Body::wrap_stream(stream))
+            .file_name(file_name.to_string());
+
+        let form = multipart::Form::new()
+            .text("purpose", format!("{:?}", purpose).to_lowercase())
+            .part("file", file_part);
+
+        let client = Client::new();
+        let response = client
+            .post(format!("{}/files", self.base_url))
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .multipart(form)
+            .send()
+            .await?;
+
+        let file_object = response.json::<FileObject>().await?;
+        Ok(file_object)
+    }
+
+    /// List all files in the OpenAI API.
+    ///
+    /// ```rust,no_run
+    /// # use tysm::files::FilesClient;
+    /// # use tokio_test::block_on;
+    /// # block_on(async {
+    /// let client = FilesClient::from_env().unwrap();
+    /// let files = client.list_files().await.unwrap();
+    /// for file in files.data {
+    ///     println!("File: {} ({})", file.filename, file.id);
+    /// }
+    /// # });
+    /// ```
+    pub async fn list_files(&self) -> Result<FileList, FilesError> {
+        let client = Client::new();
+        let response = client
+            .get(format!("{}/files", self.base_url))
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .send()
+            .await?;
+
+        let file_list = response.json::<FileList>().await?;
+        Ok(file_list)
+    }
+
+    /// Retrieve a file from the OpenAI API.
+    ///
+    /// ```rust,no_run
+    /// # use tysm::files::FilesClient;
+    /// # use tokio_test::block_on;
+    /// # block_on(async {
+    /// let client = FilesClient::from_env().unwrap();
+    /// let file = client.retrieve_file("file-abc123").await.unwrap();
+    /// println!("File: {} ({})", file.filename, file.id);
+    /// # });
+    /// ```
+    pub async fn retrieve_file(&self, file_id: &str) -> Result<FileObject, FilesError> {
+        let client = Client::new();
+        let response = client
+            .get(format!("{}/files/{}", self.base_url, file_id))
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .send()
+            .await?;
+
+        let file_object = response.json::<FileObject>().await?;
+        Ok(file_object)
+    }
+
+    /// Delete a file from the OpenAI API.
+    ///
+    /// ```rust,no_run
+    /// # use tysm::files::FilesClient;
+    /// # use tokio_test::block_on;
+    /// # block_on(async {
+    /// let client = FilesClient::from_env().unwrap();
+    /// let deleted = client.delete_file("file-abc123").await.unwrap();
+    /// println!("Deleted: {}", deleted.id);
+    /// # });
+    /// ```
+    pub async fn delete_file(&self, file_id: &str) -> Result<DeletedFile, FilesError> {
+        let client = Client::new();
+        let response = client
+            .delete(format!("{}/files/{}", self.base_url, file_id))
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .send()
+            .await?;
+
+        let deleted_file = response.json::<DeletedFile>().await?;
+        Ok(deleted_file)
+    }
+
+    /// Download a file from the OpenAI API.
+    ///
+    /// ```rust,no_run
+    /// # use tysm::files::FilesClient;
+    /// # use tokio_test::block_on;
+    /// # block_on(async {
+    /// let client = FilesClient::from_env().unwrap();
+    /// let content = client.download_file("file-abc123").await.unwrap();
+    /// println!("File content: {}", content);
+    /// # });
+    /// ```
+    pub async fn download_file(&self, file_id: &str) -> Result<String, FilesError> {
+        let client = Client::new();
+        let response = client
+            .get(format!("{}/files/{}/content", self.base_url, file_id))
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .send()
+            .await?;
+
+        let content = response.text().await?;
+        Ok(content)
+    }
+}
+
+/// Response from deleting a file.
+#[derive(Debug, Deserialize)]
+pub struct DeletedFile {
+    /// The ID of the deleted file.
+    pub id: String,
+    /// The object type, always "file".
+    pub object: String,
+    /// Whether the file was deleted.
+    pub deleted: bool,
+}

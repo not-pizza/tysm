@@ -46,6 +46,7 @@
 
 pub mod chat_completions;
 pub mod embeddings;
+pub mod files;
 mod schema;
 mod utils;
 

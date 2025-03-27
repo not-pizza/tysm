@@ -20,13 +20,15 @@ default = ["dotenv"]
 
 [dependencies]
 dotenv = { version = "0.15.0", optional = true }
-reqwest = { version = "0.11.20", features = ["json"] }
+reqwest = { version = "0.11.20", features = ["json", "multipart", "stream"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.107"
 thiserror = "2.0.9"
 tynm = "0.1.10"
 lru = "0.12.5"
 schemars = { version = "1.0.0-alpha.17", features = ["preserve_order"] }
+tokio = { version = "1.21.2", features = ["fs"] }
+tokio-util = { version = "0.7.10", features = ["codec"] }
 
 [dev-dependencies]
 tokio = { version = "1.21.2", features = ["macros", "rt-multi-thread"] }
