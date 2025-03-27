@@ -1166,7 +1166,7 @@ fn test_deser() {
 #[cfg(test)]
 mod batch_tests {
     use super::batch::*;
-    use super::*;
+
     use serde_json::json;
 
     #[test]

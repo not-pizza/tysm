@@ -1,6 +1,5 @@
 use serde_json::json;
 use std::env;
-use std::error::Error;
 use tysm::chat_completions::{batch::BatchRequestItem, ChatClient};
 
 #[tokio::main]
