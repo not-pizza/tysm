@@ -2,7 +2,7 @@
 name = "tysm"
 version = "0.4.0"
 edition = "2021"
-description = "Typed OpenAI Chat Completions"
+description = "Batteries-included Rust OpenAI Client"
 license = "MIT"
 homepage = "https://github.com/not-pizza/tysm"
 repository = "https://github.com/not-pizza/tysm"
