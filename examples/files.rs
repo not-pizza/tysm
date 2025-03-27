@@ -2,7 +2,7 @@ use std::path::Path;
 use tysm::files::{FilePurpose, FilesClient};
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> anyhow::Result<()> {
     // Create a client using the API key from environment variables
     let client = FilesClient::from_env()?;
 

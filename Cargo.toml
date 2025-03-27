@@ -33,15 +33,16 @@ tokio-util = { version = "0.7.10", features = ["codec"] }
 [dev-dependencies]
 tokio = { version = "1.21.2", features = ["macros", "rt-multi-thread", "full"] }
 tokio-test = "0.4"
+anyhow = "1"
 
 [[example]]
-name = "chat_completions_example"
-path = "examples/chat_completions_example.rs"
+name = "chat-completions"
+path = "examples/chat_completions.rs"
 
 [[example]]
-name = "embeddings_example"
-path = "examples/embeddings_example.rs"
+name = "embeddings"
+path = "examples/embeddings.rs"
 
 [[example]]
-name = "files_example"
-path = "examples/files_example.rs"
+name = "files"
+path = "examples/files.rs"

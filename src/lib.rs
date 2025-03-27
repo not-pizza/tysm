@@ -52,6 +52,36 @@ mod utils;
 
 pub use utils::OpenAiApiKeyError;
 
+/// Emitted by the OpenAI API when an error occurs.
+#[derive(Debug, serde::Deserialize)]
+pub struct OpenAiError {
+    /// The type of the error
+    pub r#type: String,
+    /// The error code.
+    #[serde(default)]
+    pub code: Option<String>,
+    /// The error message.
+    pub message: String,
+    /// The error parameter.
+    #[serde(default)]
+    pub param: Option<String>,
+}
+
+impl std::error::Error for OpenAiError {}
+
+impl std::fmt::Display for OpenAiError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.r#type, self.message)?;
+        if let Some(code) = &self.code {
+            write!(f, " (code: {})", code)?;
+        }
+        if let Some(param) = &self.param {
+            write!(f, " (param: {})", param)?;
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::chat_completions::ChatClient;

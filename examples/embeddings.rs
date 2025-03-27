@@ -1,7 +1,7 @@
 use tysm::embeddings::EmbeddingsClient;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> anyhow::Result<()> {
     // Create a client using the API key from environment variables
     let client = EmbeddingsClient::from_env("text-embedding-3-small")?;
 

@@ -8,7 +8,10 @@ use thiserror::Error;
 use tokio::fs::File;
 use tokio_util::codec::{BytesCodec, FramedRead};
 
-use crate::utils::{api_key, OpenAiApiKeyError};
+use crate::{
+    utils::{api_key, OpenAiApiKeyError},
+    OpenAiError,
+};
 
 /// A client for interacting with the OpenAI Files API.
 pub struct FilesClient {
@@ -65,23 +68,25 @@ impl std::fmt::Display for FilePurpose {
 #[derive(Debug, Deserialize)]
 pub struct FileObject {
     /// The ID of the file.
-    #[serde(default)]
     pub id: String,
     /// The object type, always "file".
-    #[serde(default)]
     pub object: String,
     /// The size of the file in bytes.
-    #[serde(default)]
     pub bytes: u64,
     /// When the file was created.
-    #[serde(default)]
     pub created_at: u64,
     /// The name of the file.
-    #[serde(default)]
     pub filename: String,
     /// The purpose of the file.
-    #[serde(default)]
     pub purpose: String,
+}
+
+#[derive(Debug, Deserialize)]
+enum UploadFileResponse {
+    #[serde(rename = "error")]
+    Error(OpenAiError),
+    #[serde(untagged)]
+    File(FileObject),
 }
 
 /// A list of files in the OpenAI API.
@@ -101,8 +106,12 @@ pub enum FilesError {
     RequestError(#[from] reqwest::Error),
 
     /// An error occurred when deserializing the response from the API.
-    #[error("API returned an error response: {0}")]
-    ApiResponseError(serde_json::Error),
+    #[error("API returned an unknown response: {0} \nerror: {1}")]
+    ApiParseError(String, serde_json::Error),
+
+    /// An error occurred when deserializing the response from the API.
+    #[error("API returned an error response")]
+    ApiError(#[from] OpenAiError),
 
     /// An error occurred when reading the file.
     #[error("File error: {0}")]
@@ -182,12 +191,14 @@ impl FilesClient {
 
         // Print the response for debugging
         let response_text = response.text().await?;
-        println!("API Response: {}", response_text);
 
-        let file_object: FileObject =
-            serde_json::from_str(&response_text).map_err(|e| FilesError::ApiResponseError(e))?;
+        let file_object: UploadFileResponse = serde_json::from_str(&response_text)
+            .map_err(|e| FilesError::ApiParseError(response_text, e))?;
 
-        Ok(file_object)
+        match file_object {
+            UploadFileResponse::File(file) => Ok(file),
+            UploadFileResponse::Error(error) => Err(FilesError::ApiError(error)),
+        }
     }
 
     /// Upload file content directly from bytes to the OpenAI API.
@@ -224,12 +235,14 @@ impl FilesClient {
 
         // Print the response for debugging
         let response_text = response.text().await?;
-        println!("API Response: {}", response_text);
 
-        let file_object: FileObject =
-            serde_json::from_str(&response_text).map_err(|e| FilesError::ApiResponseError(e))?;
+        let file_object: UploadFileResponse = serde_json::from_str(&response_text)
+            .map_err(|e| FilesError::ApiParseError(response_text, e))?;
 
-        Ok(file_object)
+        match file_object {
+            UploadFileResponse::File(file) => Ok(file),
+            UploadFileResponse::Error(error) => Err(FilesError::ApiError(error)),
+        }
     }
 
     /// List all files in the OpenAI API.

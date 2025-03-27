@@ -22,7 +22,7 @@ struct MovieRecommendation {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> anyhow::Result<()> {
     // Create a client using the API key from environment variables
     let client = ChatClient::from_env("gpt-4o")?;
 

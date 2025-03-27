@@ -11,6 +11,7 @@ use thiserror::Error;
 
 use crate::schema::OpenAiTransform;
 use crate::utils::{api_key, OpenAiApiKeyError};
+use crate::OpenAiError;
 
 /// To use this library, you need to create a [`ChatClient`]. This contains various information needed to interact with the ChatGPT API,
 /// such as the API key, the model to use, and the URL of the API.
@@ -222,6 +223,15 @@ struct ChatChoice {
     finish_reason: String,
 }
 
+#[derive(Deserialize, Debug)]
+enum ChatResponseOrError {
+    #[serde(rename = "error")]
+    Error(OpenAiError),
+
+    #[serde(untagged)]
+    Response(ChatResponse),
+}
+
 /// The token consumption of the chat-completions API.
 #[derive(Deserialize, Debug, Default, Clone, Copy, Eq, PartialEq)]
 pub struct ChatUsage {
@@ -319,8 +329,12 @@ pub enum ChatError {
     JsonSerializeError(serde_json::Error, ChatRequest),
 
     /// An error occurred when deserializing the response from the API.
-    #[error("API returned an error response: {0} \nresponse: {1} \nrequest: {2}")]
-    ApiResponseError(serde_json::Error, String, String),
+    #[error("API returned an unknown response: {0} \nerror: {1}")]
+    ApiParseError(String, serde_json::Error),
+
+    /// An error occurred when deserializing the response from the API.
+    #[error("API returned an error response for request: {1}")]
+    ApiError(#[source] OpenAiError, String),
 
     /// The API returned a response that was not a valid JSON object.
     #[error("API returned a response that was not a valid JSON object: {0} \nresponse: {1}")]
@@ -469,17 +483,26 @@ impl ChatClient {
         let chat_request_str = serde_json::to_string(&chat_request).unwrap();
 
         let chat_response = if let Some(cached_response) = self.chat_cached(&chat_request).await {
-            let chat_response: ChatResponse =
-                serde_json::from_str(&cached_response).map_err(|e| {
-                    ChatError::ApiResponseError(e, cached_response.clone(), chat_request_str)
-                })?;
+            let chat_response: ChatResponseOrError = serde_json::from_str(&cached_response)
+                .map_err(|e| ChatError::ApiParseError(cached_response.clone(), e))?;
+            let chat_response = match chat_response {
+                ChatResponseOrError::Response(response) => response,
+                ChatResponseOrError::Error(error) => {
+                    return Err(ChatError::ApiError(error, chat_request_str));
+                }
+            };
             chat_response
         } else {
             let chat_response = self.chat_uncached(&chat_request).await?;
-            let chat_response: ChatResponse =
-                serde_json::from_str(&chat_response).map_err(|e| {
-                    ChatError::ApiResponseError(e, chat_response.clone(), chat_request_str)
-                })?;
+            let chat_response: ChatResponseOrError = serde_json::from_str(&chat_response)
+                .map_err(|e| ChatError::ApiParseError(chat_request_str.clone(), e))?;
+            let chat_response = match chat_response {
+                ChatResponseOrError::Response(response) => response,
+                ChatResponseOrError::Error(error) => {
+                    return Err(ChatError::ApiError(error, chat_request_str));
+                }
+            };
+
             if let Ok(mut usage) = self.usage.write() {
                 *usage += chat_response.usage;
             }

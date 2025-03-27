@@ -30,13 +30,13 @@ cargo run --example <example_name>
 ```
 
 Where `<example_name>` is one of:
-- `chat_completions`
+- `chat-completions`
 - `embeddings`
 - `files`
 
 ## Examples Overview
 
-### Chat Completions API (`chat_completions_example.rs`)
+### Chat Completions API (`chat_completions.rs`)
 
 Demonstrates how to:
 - Create a chat client
@@ -44,7 +44,7 @@ Demonstrates how to:
 - Use system prompts to guide responses
 - Track token usage
 
-### Embeddings API (`embeddings_example.rs`)
+### Embeddings API (`embeddings.rs`)
 
 Demonstrates how to:
 - Create an embeddings client
@@ -52,7 +52,7 @@ Demonstrates how to:
 - Generate an embedding for a single document
 - Calculate similarity between embeddings
 
-### Files API (`files_example.rs`)
+### Files API (`files.rs`)
 
 Demonstrates how to:
 - List existing files
@@ -65,4 +65,3 @@ Demonstrates how to:
 ## Notes
 
 - The Files API examples will create and delete temporary files in your OpenAI account.
-- These examples use minimal error handling for clarity. In production code, you should implement more robust error handling.
