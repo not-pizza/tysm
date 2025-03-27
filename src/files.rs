@@ -163,8 +163,7 @@ impl FilesClient {
         bytes: Vec<u8>,
         purpose: FilePurpose,
     ) -> Result<FileObject, FilesError> {
-        let file_part = multipart::Part::bytes(bytes)
-            .file_name(filename.to_string());
+        let file_part = multipart::Part::bytes(bytes).file_name(filename.to_string());
 
         let form = multipart::Form::new()
             .text("purpose", format!("{:?}", purpose).to_lowercase())

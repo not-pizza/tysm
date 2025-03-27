@@ -244,15 +244,21 @@ pub struct ChatUsage {
 /// Currently, only contains the number of cached tokens.
 #[derive(Deserialize, Debug, Default, Clone, Copy, Eq, PartialEq)]
 pub struct PromptTokenDetails {
-    cached_tokens: u32,
+    /// OpenAI automatically caches tokens that are used in a previous request.
+    /// This reduces input cost.
+    pub cached_tokens: u32,
 }
 
 /// Includes details about the completion tokens for reasoning models
 #[derive(Deserialize, Debug, Default, Clone, Copy, Eq, PartialEq)]
 pub struct CompletionTokenDetails {
-    reasoning_tokens: u32,
-    accepted_prediction_tokens: u32,
-    rejected_prediction_tokens: u32,
+    /// The number of tokens used for reasoning.
+    pub reasoning_tokens: u32,
+    /// The number of accepted tokens from the reasoning model.
+    pub accepted_prediction_tokens: u32,
+    /// The number of rejected tokens from the reasoning model.
+    /// (These tokens are still counted towards the cost of the request)
+    pub rejected_prediction_tokens: u32,
 }
 
 impl std::ops::AddAssign for ChatUsage {
@@ -260,6 +266,44 @@ impl std::ops::AddAssign for ChatUsage {
         self.prompt_tokens += rhs.prompt_tokens;
         self.completion_tokens += rhs.completion_tokens;
         self.total_tokens += rhs.total_tokens;
+
+        self.prompt_token_details = match (self.prompt_token_details, rhs.prompt_token_details) {
+            (Some(lhs), Some(rhs)) => Some(lhs + rhs),
+            (None, Some(rhs)) => Some(rhs),
+            (Some(lhs), None) => Some(lhs),
+            (None, None) => None,
+        };
+        self.completion_token_details =
+            match (self.completion_token_details, rhs.completion_token_details) {
+                (Some(lhs), Some(rhs)) => Some(lhs + rhs),
+                (None, Some(rhs)) => Some(rhs),
+                (Some(lhs), None) => Some(lhs),
+                (None, None) => None,
+            };
+    }
+}
+
+impl std::ops::Add for PromptTokenDetails {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        Self {
+            cached_tokens: self.cached_tokens + rhs.cached_tokens,
+        }
+    }
+}
+
+impl std::ops::Add for CompletionTokenDetails {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        Self {
+            reasoning_tokens: self.reasoning_tokens + rhs.reasoning_tokens,
+            accepted_prediction_tokens: self.accepted_prediction_tokens
+                + rhs.accepted_prediction_tokens,
+            rejected_prediction_tokens: self.rejected_prediction_tokens
+                + rhs.rejected_prediction_tokens,
+        }
     }
 }
 

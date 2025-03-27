@@ -30,9 +30,9 @@ cargo run --example <example_name>
 ```
 
 Where `<example_name>` is one of:
-- `chat_completions_example`
-- `embeddings_example`
-- `files_example`
+- `chat_completions`
+- `embeddings`
+- `files`
 
 ## Examples Overview
 
