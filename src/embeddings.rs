@@ -17,6 +17,14 @@ struct EmbeddingsResponse {
     usage: Usage,
 }
 
+#[derive(Debug, Deserialize)]
+enum EmbeddingsResponseOrError {
+    #[serde(rename = "error")]
+    Error(OpenAiError),
+    #[serde(untagged)]
+    Response(EmbeddingsResponse),
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct Embedding {
     embedding: Vec<f32>,
@@ -30,7 +38,10 @@ struct Usage {
 }
 use thiserror::Error;
 
-use crate::utils::{api_key, OpenAiApiKeyError};
+use crate::{
+    utils::{api_key, OpenAiApiKeyError},
+    OpenAiError,
+};
 
 /// A client for interacting with the OpenAI Embeddings API.
 pub struct EmbeddingsClient {
@@ -50,8 +61,12 @@ pub enum EmbeddingsError {
     RequestError(#[from] reqwest::Error),
 
     /// An error occurred when deserializing the response from the API.
-    #[error("API returned an error response: {0} \nresponse: {1} \nrequest: {2}")]
-    ApiResponseError(serde_json::Error, String, String),
+    #[error("API returned an unknown response: {0} \nerror: {1} \nrequest: {2}")]
+    ApiParseError(String, serde_json::Error, String),
+
+    /// An error occurred when deserializing the response from the API.
+    #[error("API returned an error response for request: {1}")]
+    ApiError(#[source] OpenAiError, String),
 
     /// The API returned a response that was not the expected JSON object.
     #[error("API returned a response that was not the expected JSON object: {0} \nresponse: {1}")]
@@ -122,14 +137,24 @@ impl EmbeddingsClient {
 
             let response_text = response.text().await?;
 
-            let embeddings_response: EmbeddingsResponse = serde_json::from_str(&response_text)
-                .map_err(|e| {
-                    EmbeddingsError::ApiResponseError(
-                        e,
+            let embeddings_response: EmbeddingsResponseOrError =
+                serde_json::from_str(&response_text).map_err(|e| {
+                    EmbeddingsError::ApiParseError(
                         response_text.clone(),
+                        e,
                         serde_json::to_string(&request).unwrap(),
                     )
                 })?;
+
+            let embeddings_response = match embeddings_response {
+                EmbeddingsResponseOrError::Response(response) => response,
+                EmbeddingsResponseOrError::Error(error) => {
+                    return Err(EmbeddingsError::ApiError(
+                        error,
+                        serde_json::to_string(&request).unwrap(),
+                    ));
+                }
+            };
 
             if embeddings_response.data.len() != chunk.len() {
                 return Err(EmbeddingsError::IncorrectNumberOfEmbeddings);

@@ -329,8 +329,8 @@ pub enum ChatError {
     JsonSerializeError(serde_json::Error, ChatRequest),
 
     /// An error occurred when deserializing the response from the API.
-    #[error("API returned an unknown response: {0} \nerror: {1}")]
-    ApiParseError(String, serde_json::Error),
+    #[error("API returned an unknown response: {0} \nerror: {1} \nrequest: {2}")]
+    ApiParseError(String, serde_json::Error, String),
 
     /// An error occurred when deserializing the response from the API.
     #[error("API returned an error response for request: {1}")]
@@ -484,18 +484,21 @@ impl ChatClient {
 
         let chat_response = if let Some(cached_response) = self.chat_cached(&chat_request).await {
             let chat_response: ChatResponseOrError = serde_json::from_str(&cached_response)
-                .map_err(|e| ChatError::ApiParseError(cached_response.clone(), e))?;
-            let chat_response = match chat_response {
+                .map_err(|e| {
+                    ChatError::ApiParseError(cached_response.clone(), e, chat_request_str.clone())
+                })?;
+            match chat_response {
                 ChatResponseOrError::Response(response) => response,
                 ChatResponseOrError::Error(error) => {
                     return Err(ChatError::ApiError(error, chat_request_str));
                 }
-            };
-            chat_response
+            }
         } else {
             let chat_response = self.chat_uncached(&chat_request).await?;
-            let chat_response: ChatResponseOrError = serde_json::from_str(&chat_response)
-                .map_err(|e| ChatError::ApiParseError(chat_request_str.clone(), e))?;
+            let chat_response: ChatResponseOrError =
+                serde_json::from_str(&chat_response).map_err(|e| {
+                    ChatError::ApiParseError(chat_request_str.clone(), e, chat_request_str.clone())
+                })?;
             let chat_response = match chat_response {
                 ChatResponseOrError::Response(response) => response,
                 ChatResponseOrError::Error(error) => {
