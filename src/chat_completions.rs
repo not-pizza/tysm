@@ -37,8 +37,6 @@ pub struct ChatClient {
     pub base_url: url::Url,
     /// The subpath to the chat-completions endpoint. By default, this is `chat/completions`.
     pub chat_completions_path: String,
-    /// The subpath to the batches endpoint. By default, this is `batches`.
-    pub batches_path: String,
     /// The model to use for the ChatGPT API.
     pub model: String,
     /// A cache of the few responses. Stores the last 1024 responses by default.
@@ -367,7 +365,6 @@ impl ChatClient {
             api_key: api_key.into(),
             base_url: url::Url::parse("https://api.openai.com/v1/").unwrap(),
             chat_completions_path: "chat/completions".to_string(),
-            batches_path: "batches/".to_string(),
             model: model.into(),
             lru: RwLock::new(LruCache::new(NonZeroUsize::new(1024).unwrap())),
             usage: RwLock::new(ChatUsage::default()),
@@ -583,11 +580,12 @@ impl ChatClient {
 /// # Example
 ///
 /// ```rust,no_run
-/// # use tysm::chat_completions::{ChatClient, batch::BatchRequestItem};
+/// # use tysm::chat_completions::{batch::{BatchClient, BatchRequestItem}, ChatClient};
 /// # use serde_json::json;
 /// # use tokio_test::block_on;
 /// # block_on(async {
 /// let client = ChatClient::from_env("gpt-4o").unwrap();
+/// let batch_client = BatchClient::from(&client);
 ///
 /// // Create batch requests
 /// let requests = vec![
@@ -610,21 +608,21 @@ impl ChatClient {
 /// ];
 ///
 /// // Create a batch file
-/// let file_id = client.create_batch_file("my_batch.jsonl", &requests).await.unwrap();
+/// let file_id = batch_client.create_batch_file("my_batch.jsonl", &requests).await.unwrap();
 ///
 /// // Create a batch
-/// let batch = client.create_batch(file_id, "/v1/chat/completions").await.unwrap();
+/// let batch = batch_client.create_batch(file_id).await.unwrap();
 /// println!("Batch created: {}", batch.id);
 ///
 /// // Check batch status
-/// let status = client.get_batch_status(&batch.id).await.unwrap();
+/// let status = batch_client.get_batch_status(&batch.id).await.unwrap();
 /// println!("Batch status: {}", status.status);
 ///
 /// // Wait for batch to complete
-/// let completed_batch = client.wait_for_batch(&batch.id).await.unwrap();
+/// let completed_batch = batch_client.wait_for_batch(&batch.id).await.unwrap();
 ///
 /// // Get batch results
-/// let results = client.get_batch_results(&completed_batch).await.unwrap();
+/// let results = batch_client.get_batch_results(&completed_batch).await.unwrap();
 /// for result in results {
 ///     println!("Result for {}: {}", result.custom_id, result.response.unwrap().body);
 /// }
@@ -644,6 +642,35 @@ pub mod batch {
     use crate::files::{FilePurpose, FilesClient, FilesError};
     use crate::utils::remove_trailing_slash;
     use crate::OpenAiError;
+
+    /// A client for batching requests to the OpenAI API.
+    pub struct BatchClient {
+        /// The API key to use for the ChatGPT API.
+        pub api_key: String,
+        /// The URL of the ChatGPT API. Customize this if you are using a custom API that is compatible with OpenAI's.
+        pub base_url: url::Url,
+        /// The subpath to the batches endpoint. By default, this is `batches`.
+        pub batches_path: String,
+        /// the endpoint whose calls we want to batch
+        pub endpoint: String,
+        /// The model to use for the ChatGPT API.
+        pub model: String,
+        /// The client to use for file operations.
+        pub files_client: FilesClient,
+    }
+
+    impl From<&ChatClient> for BatchClient {
+        fn from(client: &ChatClient) -> Self {
+            Self {
+                api_key: client.api_key.clone(),
+                base_url: client.base_url.clone(),
+                batches_path: "batches/".to_string(),
+                endpoint: "v1/chat/completions".to_string(),
+                model: client.model.clone(),
+                files_client: FilesClient::from(client),
+            }
+        }
+    }
 
     /// Errors that can occur when interacting with the Batch API.
     #[derive(Error, Debug)]
@@ -873,7 +900,7 @@ pub mod batch {
         }
     }
 
-    impl ChatClient {
+    impl BatchClient {
         fn batches_url(&self) -> url::Url {
             self.base_url.join(&self.batches_path).unwrap()
         }
@@ -884,8 +911,6 @@ pub mod batch {
             filename: impl AsRef<str>,
             requests: &[BatchRequestItem],
         ) -> Result<String, BatchError> {
-            let files_client = FilesClient::from(self);
-
             // Create a temporary file
             let temp_path = std::env::temp_dir().join(filename.as_ref());
             let mut file = std::fs::File::create(&temp_path)?;
@@ -898,7 +923,8 @@ pub mod batch {
             file.flush()?;
 
             // Upload the file
-            let file_obj = files_client
+            let file_obj = self
+                .files_client
                 .upload_file(&temp_path, FilePurpose::Batch)
                 .await?;
 
@@ -912,7 +938,6 @@ pub mod batch {
         pub async fn create_batch(
             &self,
             input_file_id: impl AsRef<str>,
-            endpoint: impl AsRef<str>,
         ) -> Result<Batch, BatchError> {
             let client = Client::new();
             let url = remove_trailing_slash(self.batches_url());
@@ -922,7 +947,7 @@ pub mod batch {
                 .header("Content-Type", "application/json")
                 .json(&serde_json::json!({
                     "input_file_id": input_file_id.as_ref(),
-                    "endpoint": endpoint.as_ref(),
+                    "endpoint": &self.endpoint,
                     "completion_window": "24h"
                 }))
                 .send()
@@ -1005,8 +1030,6 @@ pub mod batch {
             &self,
             batch: &Batch,
         ) -> Result<Vec<BatchResponseItem>, BatchError> {
-            let files_client = FilesClient::from(self);
-
             if batch.status != "completed" {
                 return Err(BatchError::Other(format!(
                     "Batch is not completed: {}",
@@ -1019,7 +1042,7 @@ pub mod batch {
                 .as_ref()
                 .ok_or_else(|| BatchError::Other("Batch has no output file".to_string()))?;
 
-            let content = files_client.download_file(output_file_id).await?;
+            let content = self.files_client.download_file(output_file_id).await?;
 
             let mut results = Vec::new();
             for line in content.lines() {
@@ -1036,14 +1059,12 @@ pub mod batch {
             &self,
             batch: &Batch,
         ) -> Result<Vec<BatchResponseItem>, BatchError> {
-            let files_client = FilesClient::from(self);
-
             let error_file_id = batch
                 .error_file_id
                 .as_ref()
                 .ok_or_else(|| BatchError::Other("Batch has no error file".to_string()))?;
 
-            let content = files_client.download_file(error_file_id).await?;
+            let content = self.files_client.download_file(error_file_id).await?;
 
             let mut errors = Vec::new();
             for line in content.lines() {
@@ -1088,7 +1109,12 @@ pub mod batch {
         }
 
         /// List all batches.
-        pub async fn list_batches(
+        pub async fn list_batches(&self) -> Result<BatchList, BatchError> {
+            // repeatedly call list_batches_limited until there are no more batches, AI!
+        }
+
+        /// List all batches.
+        pub async fn list_batches_limited(
             &self,
             limit: Option<u32>,
             after: Option<&str>,
