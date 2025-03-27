@@ -333,32 +333,35 @@ impl BatchClient {
         self.base_url.join(&self.batches_path).unwrap()
     }
 
-    // I'd rather this return Vec<u8> rather than actually writing to a file, AI!
+    /// Create batch file content from a list of batch request items.
+    /// 
+    /// Returns the serialized JSONL content as bytes.
+    pub fn create_batch_content(&self, requests: &[BatchRequestItem]) -> Vec<u8> {
+        let mut content = Vec::new();
+        
+        // Write each request as a JSON line
+        for request in requests {
+            let json = serde_json::to_string(request).unwrap(); // cannot panic
+            writeln!(&mut content, "{}", json).unwrap(); // writing to memory cannot fail
+        }
+        
+        content
+    }
+
     /// Create a batch file from a list of batch request items.
     pub async fn create_batch_file(
         &self,
         filename: impl AsRef<str>,
         requests: &[BatchRequestItem],
     ) -> Result<String, BatchError> {
-        // Create a temporary file
-        let temp_path = std::env::temp_dir().join(filename.as_ref());
-        let mut file = std::fs::File::create(&temp_path)?;
-
-        // Write each request as a JSON line
-        for request in requests {
-            let json = serde_json::to_string(request).unwrap(); // cannot panic
-            writeln!(file, "{}", json)?;
-        }
-        file.flush()?;
-
-        // Upload the file
+        // Create the batch content
+        let content = self.create_batch_content(requests);
+        
+        // Upload the content directly
         let file_obj = self
             .files_client
-            .upload_file(&temp_path, FilePurpose::Batch)
+            .upload_bytes(filename.as_ref(), content, FilePurpose::Batch)
             .await?;
-
-        // Clean up the temporary file
-        std::fs::remove_file(temp_path)?;
 
         Ok(file_obj.id)
     }
