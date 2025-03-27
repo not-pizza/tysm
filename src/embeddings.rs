@@ -89,7 +89,7 @@ impl EmbeddingsClient {
     pub fn new(api_key: impl Into<String>, model: impl Into<String>) -> Self {
         Self {
             api_key: api_key.into(),
-            url: "https://api.openai.com/v1/embeddings".into(),
+            url: "https://api.openai.com/v1/embeddings/".into(),
             model: model.into(),
         }
     }

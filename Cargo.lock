@@ -1299,6 +1299,7 @@ dependencies = [
  "tokio-test",
  "tokio-util",
  "tynm",
+ "url",
 ]
 
 [[package]]

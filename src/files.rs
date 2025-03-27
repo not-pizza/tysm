@@ -9,23 +9,27 @@ use tokio::fs::File;
 use tokio_util::codec::{BytesCodec, FramedRead};
 
 use crate::{
-    utils::{api_key, OpenAiApiKeyError},
+    utils::{api_key, remove_trailing_slash, OpenAiApiKeyError},
     OpenAiError,
 };
 
 /// A client for interacting with the OpenAI Files API.
+#[derive(Debug)]
 pub struct FilesClient {
     /// The API key to use for the OpenAI API.
     pub api_key: String,
     /// The base URL of the OpenAI API.
-    pub url: String,
+    pub base_url: url::Url,
+    /// The path to the Files API.
+    pub files_path: String,
 }
 
 impl From<&crate::chat_completions::ChatClient> for FilesClient {
     fn from(client: &crate::chat_completions::ChatClient) -> Self {
         Self {
             api_key: client.api_key.clone(),
-            url: client.url.clone(),
+            base_url: client.base_url.clone(),
+            files_path: "files/".to_string(),
         }
     }
 }
@@ -142,8 +146,13 @@ impl FilesClient {
     pub fn new(api_key: impl Into<String>) -> Self {
         Self {
             api_key: api_key.into(),
-            url: "https://api.openai.com/v1".into(),
+            base_url: url::Url::parse("https://api.openai.com/v1/").unwrap(),
+            files_path: "files/".to_string(),
         }
+    }
+
+    fn files_url(&self) -> url::Url {
+        self.base_url.join(&self.files_path).unwrap()
     }
 
     /// Create a new [`FilesClient`].
@@ -190,8 +199,9 @@ impl FilesClient {
             .part("file", file_part);
 
         let client = Client::new();
+        let url = remove_trailing_slash(self.files_url());
         let response = client
-            .post(format!("{}/files", self.url))
+            .post(url)
             .header("Authorization", format!("Bearer {}", self.api_key))
             .multipart(form)
             .send()
@@ -235,7 +245,7 @@ impl FilesClient {
 
         let client = Client::new();
         let response = client
-            .post(format!("{}/files", self.url))
+            .post(self.files_url())
             .header("Authorization", format!("Bearer {}", self.api_key))
             .multipart(form)
             .send()
@@ -269,7 +279,7 @@ impl FilesClient {
     pub async fn list_files(&self) -> Result<FileList, FilesError> {
         let client = Client::new();
         let response = client
-            .get(format!("{}/files", self.url))
+            .get(self.files_url())
             .header("Authorization", format!("Bearer {}", self.api_key))
             .send()
             .await?;
@@ -292,7 +302,7 @@ impl FilesClient {
     pub async fn retrieve_file(&self, file_id: &str) -> Result<FileObject, FilesError> {
         let client = Client::new();
         let response = client
-            .get(format!("{}/files/{}", self.url, file_id))
+            .get(self.files_url().join(file_id).unwrap())
             .header("Authorization", format!("Bearer {}", self.api_key))
             .send()
             .await?;
@@ -315,7 +325,7 @@ impl FilesClient {
     pub async fn delete_file(&self, file_id: &str) -> Result<DeletedFile, FilesError> {
         let client = Client::new();
         let response = client
-            .delete(format!("{}/files/{}", self.url, file_id))
+            .delete(self.files_url().join(file_id).unwrap())
             .header("Authorization", format!("Bearer {}", self.api_key))
             .send()
             .await?;
@@ -338,7 +348,11 @@ impl FilesClient {
     pub async fn download_file(&self, file_id: &str) -> Result<String, FilesError> {
         let client = Client::new();
         let response = client
-            .get(format!("{}/files/{}/content", self.url, file_id))
+            .get(
+                self.files_url()
+                    .join(&format!("{file_id}/content"))
+                    .unwrap(),
+            )
             .header("Authorization", format!("Bearer {}", self.api_key))
             .send()
             .await?;

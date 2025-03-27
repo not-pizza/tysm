@@ -3,7 +3,6 @@
 //!
 //! It also provides a batch API for processing large numbers of requests asynchronously.
 
-use std::path::Path;
 use std::sync::RwLock;
 
 use lru::LruCache;
@@ -84,6 +83,7 @@ pub mod batch {
 
     use super::*;
     use crate::files::{FileObject, FilePurpose, FilesClient, FilesError};
+    use crate::utils::remove_trailing_slash;
     use crate::OpenAiError;
 
     /// Errors that can occur when interacting with the Batch API.
@@ -94,8 +94,8 @@ pub mod batch {
         RequestError(#[from] reqwest::Error),
 
         /// An error occurred when serializing or deserializing JSON.
-        #[error("JSON error: {0}")]
-        JsonError(#[from] serde_json::Error),
+        #[error("JSON error when parsing {1}")]
+        JsonParseError(#[source] serde_json::Error, String),
 
         /// An error occurred with file operations.
         #[error("File error: {0}")]
@@ -315,6 +315,10 @@ pub mod batch {
     }
 
     impl ChatClient {
+        fn batches_url(&self) -> url::Url {
+            self.base_url.join(&self.batches_path).unwrap()
+        }
+
         /// Create a batch file from a list of batch request items.
         pub async fn create_batch_file(
             &self,
@@ -329,7 +333,7 @@ pub mod batch {
 
             // Write each request as a JSON line
             for request in requests {
-                let json = serde_json::to_string(request)?;
+                let json = serde_json::to_string(request).unwrap(); // todo: remove unwrap
                 writeln!(file, "{}", json)?;
             }
             file.flush()?;
@@ -352,8 +356,9 @@ pub mod batch {
             endpoint: impl AsRef<str>,
         ) -> Result<Batch, BatchError> {
             let client = Client::new();
+            let url = remove_trailing_slash(self.batches_url());
             let response = client
-                .post(format!("{}/batches", self.url))
+                .post(url)
                 .header("Authorization", format!("Bearer {}", self.api_key))
                 .header("Content-Type", "application/json")
                 .json(&serde_json::json!({
@@ -374,7 +379,7 @@ pub mod batch {
                     let error: Result<OpenAiError, _> = serde_json::from_str(&response_text);
                     match error {
                         Ok(error) => Err(BatchError::OpenAiError(error)),
-                        Err(_) => Err(BatchError::JsonError(e)),
+                        Err(_) => Err(BatchError::JsonParseError(e, response_text)),
                     }
                 }
             }
@@ -383,8 +388,9 @@ pub mod batch {
         /// Get the status of a batch.
         pub async fn get_batch_status(&self, batch_id: &str) -> Result<Batch, BatchError> {
             let client = Client::new();
+            let url = self.batches_url().join(batch_id).unwrap();
             let response = client
-                .get(format!("{}/batches/{}", self.url, batch_id))
+                .get(url)
                 .header("Authorization", format!("Bearer {}", self.api_key))
                 .header("Content-Type", "application/json")
                 .send()
@@ -400,7 +406,7 @@ pub mod batch {
                     let error: Result<OpenAiError, _> = serde_json::from_str(&response_text);
                     match error {
                         Ok(error) => Err(BatchError::OpenAiError(error)),
-                        Err(_) => Err(BatchError::JsonError(e)),
+                        Err(_) => Err(BatchError::JsonParseError(e, response_text)),
                     }
                 }
             }
@@ -457,7 +463,8 @@ pub mod batch {
 
             let mut results = Vec::new();
             for line in content.lines() {
-                let result: BatchResponseItem = serde_json::from_str(line)?;
+                let result: BatchResponseItem = serde_json::from_str(line)
+                    .map_err(|e| BatchError::JsonParseError(e, line.to_string()))?;
                 results.push(result);
             }
 
@@ -480,7 +487,8 @@ pub mod batch {
 
             let mut errors = Vec::new();
             for line in content.lines() {
-                let error: BatchResponseItem = serde_json::from_str(line)?;
+                let error: BatchResponseItem = serde_json::from_str(line)
+                    .map_err(|e| BatchError::JsonParseError(e, line.to_string()))?;
                 errors.push(error);
             }
 
@@ -491,7 +499,13 @@ pub mod batch {
         pub async fn cancel_batch(&self, batch_id: &str) -> Result<Batch, BatchError> {
             let client = Client::new();
             let response = client
-                .post(format!("{}/batches/{}/cancel", self.url, batch_id))
+                .post(
+                    self.batches_url()
+                        .join(batch_id)
+                        .unwrap()
+                        .join("cancel")
+                        .unwrap(),
+                )
                 .header("Authorization", format!("Bearer {}", self.api_key))
                 .header("Content-Type", "application/json")
                 .send()
@@ -507,7 +521,7 @@ pub mod batch {
                     let error: Result<OpenAiError, _> = serde_json::from_str(&response_text);
                     match error {
                         Ok(error) => Err(BatchError::OpenAiError(error)),
-                        Err(_) => Err(BatchError::JsonError(e)),
+                        Err(_) => Err(BatchError::JsonParseError(e, response_text)),
                     }
                 }
             }
@@ -519,7 +533,7 @@ pub mod batch {
             limit: Option<u32>,
             after: Option<&str>,
         ) -> Result<BatchList, BatchError> {
-            let mut url = format!("{}/batches", self.url);
+            let mut url = self.batches_url();
 
             // Add query parameters
             let mut query_params = Vec::new();
@@ -529,14 +543,13 @@ pub mod batch {
             if let Some(after) = after {
                 query_params.push(format!("after={}", after));
             }
-
             if !query_params.is_empty() {
-                url = format!("{}?{}", url, query_params.join("&"));
+                url.set_query(Some(&query_params.join("&")));
             }
 
             let client = Client::new();
             let response = client
-                .get(&url)
+                .get(url)
                 .header("Authorization", format!("Bearer {}", self.api_key))
                 .header("Content-Type", "application/json")
                 .send()
@@ -553,7 +566,7 @@ pub mod batch {
                     let error: Result<OpenAiError, _> = serde_json::from_str(&response_text);
                     match error {
                         Ok(error) => Err(BatchError::OpenAiError(error)),
-                        Err(_) => Err(BatchError::JsonError(e)),
+                        Err(_) => Err(BatchError::JsonParseError(e, response_text)),
                     }
                 }
             }
@@ -580,7 +593,11 @@ pub struct ChatClient {
     /// The API key to use for the ChatGPT API.
     pub api_key: String,
     /// The URL of the ChatGPT API. Customize this if you are using a custom API that is compatible with OpenAI's.
-    pub url: String,
+    pub base_url: url::Url,
+    /// The subpath to the chat-completions endpoint. By default, this is `chat/completions`.
+    pub chat_completions_path: String,
+    /// The subpath to the batches endpoint. By default, this is `batches`.
+    pub batches_path: String,
     /// The model to use for the ChatGPT API.
     pub model: String,
     /// A cache of the few responses. Stores the last 1024 responses by default.
@@ -907,11 +924,17 @@ impl ChatClient {
 
         Self {
             api_key: api_key.into(),
-            url: "https://api.openai.com/v1/chat/completions".into(),
+            base_url: url::Url::parse("https://api.openai.com/v1/").unwrap(),
+            chat_completions_path: "chat/completions".to_string(),
+            batches_path: "batches/".to_string(),
             model: model.into(),
             lru: RwLock::new(LruCache::new(NonZeroUsize::new(1024).unwrap())),
             usage: RwLock::new(ChatUsage::default()),
         }
+    }
+
+    fn chat_completions_url(&self) -> url::Url {
+        self.base_url.join(&self.chat_completions_path).unwrap()
     }
 
     /// Create a new [`ChatClient`].
@@ -1082,7 +1105,7 @@ impl ChatClient {
         let reqwest_client = Client::new();
 
         let response = reqwest_client
-            .post(self.url.clone())
+            .post(self.chat_completions_url())
             .header("Authorization", format!("Bearer {}", self.api_key.clone()))
             .header("Content-Type", "application/json")
             .json(chat_request)

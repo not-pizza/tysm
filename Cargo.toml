@@ -29,6 +29,7 @@ lru = "0.12.5"
 schemars = { version = "1.0.0-alpha.17", features = ["preserve_order"] }
 tokio = { version = "1.21.2", features = ["fs"] }
 tokio-util = { version = "0.7.10", features = ["codec"] }
+url = "2.5.4"
 
 [dev-dependencies]
 tokio = { version = "1.21.2", features = ["macros", "rt-multi-thread", "full"] }
