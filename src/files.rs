@@ -207,7 +207,6 @@ impl FilesClient {
             .send()
             .await?;
 
-        // Print the response for debugging
         let response_text = response.text().await?;
 
         let file_object: UploadFileResponse = serde_json::from_str(&response_text)
@@ -251,7 +250,6 @@ impl FilesClient {
             .send()
             .await?;
 
-        // Print the response for debugging
         let response_text = response.text().await?;
 
         let file_object: UploadFileResponse = serde_json::from_str(&response_text)

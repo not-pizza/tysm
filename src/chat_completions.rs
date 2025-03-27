@@ -15,564 +15,6 @@ use crate::schema::OpenAiTransform;
 use crate::utils::{api_key, OpenAiApiKeyError};
 use crate::OpenAiError;
 
-/// Batch API for processing large numbers of requests asynchronously.
-///
-/// The Batch API allows you to send asynchronous groups of requests with 50% lower costs,
-/// a separate pool of significantly higher rate limits, and a clear 24-hour turnaround time.
-///
-/// # Example
-///
-/// ```rust,no_run
-/// # use tysm::chat_completions::{ChatClient, batch::BatchRequestItem};
-/// # use serde_json::json;
-/// # use tokio_test::block_on;
-/// # block_on(async {
-/// let client = ChatClient::from_env("gpt-4o").unwrap();
-///
-/// // Create batch requests
-/// let requests = vec![
-///     BatchRequestItem::new_chat(
-///         "request-1",
-///         "gpt-4o",
-///         vec![
-///             json!({"role": "system", "content": "You are a helpful assistant."}),
-///             json!({"role": "user", "content": "Hello world!"}),
-///         ],
-///     ),
-///     BatchRequestItem::new_chat(
-///         "request-2",
-///         "gpt-4o",
-///         vec![
-///             json!({"role": "system", "content": "You are an unhelpful assistant."}),
-///             json!({"role": "user", "content": "Hello world!"}),
-///         ],
-///     ),
-/// ];
-///
-/// // Create a batch file
-/// let file_id = client.create_batch_file("my_batch.jsonl", &requests).await.unwrap();
-///
-/// // Create a batch
-/// let batch = client.create_batch(file_id, "/v1/chat/completions").await.unwrap();
-/// println!("Batch created: {}", batch.id);
-///
-/// // Check batch status
-/// let status = client.get_batch_status(&batch.id).await.unwrap();
-/// println!("Batch status: {}", status.status);
-///
-/// // Wait for batch to complete
-/// let completed_batch = client.wait_for_batch(&batch.id).await.unwrap();
-///
-/// // Get batch results
-/// let results = client.get_batch_results(&completed_batch).await.unwrap();
-/// for result in results {
-///     println!("Result for {}: {}", result.custom_id, result.response.unwrap().body);
-/// }
-/// # });
-/// ```
-pub mod batch {
-    use reqwest::Client;
-    use serde::{Deserialize, Serialize};
-    use serde_json::Value;
-    use std::io::Write;
-
-    use std::time::Duration;
-    use thiserror::Error;
-    use tokio::time::sleep;
-
-    use super::*;
-    use crate::files::{FilePurpose, FilesClient, FilesError};
-    use crate::utils::remove_trailing_slash;
-    use crate::OpenAiError;
-
-    /// Errors that can occur when interacting with the Batch API.
-    #[derive(Error, Debug)]
-    pub enum BatchError {
-        /// An error occurred when sending the request to the API.
-        #[error("Request error: {0}")]
-        RequestError(#[from] reqwest::Error),
-
-        /// An error occurred when serializing or deserializing JSON.
-        #[error("JSON error when parsing {1}")]
-        JsonParseError(#[source] serde_json::Error, String),
-
-        /// An error occurred with file operations.
-        #[error("File error: {0}")]
-        FileError(#[from] std::io::Error),
-
-        /// An error occurred with the Files API.
-        #[error("Files API error: {0}")]
-        FilesApiError(#[from] FilesError),
-
-        /// An error occurred with the Chat API.
-        #[error("Chat API error: {0}")]
-        ChatError(#[from] ChatError),
-
-        /// An error occurred with the OpenAI API.
-        #[error("OpenAI API error: {0}")]
-        OpenAiError(#[from] OpenAiError),
-
-        /// The batch has expired.
-        #[error("Batch expired: {0}")]
-        BatchExpired(String),
-
-        /// The batch has failed.
-        #[error("Batch failed: {0}")]
-        BatchFailed(String),
-
-        /// The batch was cancelled.
-        #[error("Batch cancelled: {0}")]
-        BatchCancelled(String),
-
-        /// Timeout waiting for batch to complete.
-        #[error("Timeout waiting for batch to complete: {0}")]
-        BatchTimeout(String),
-
-        /// Other batch error.
-        #[error("Batch error: {0}")]
-        Other(String),
-    }
-
-    /// A request item for a batch.
-    #[derive(Serialize, Deserialize, Debug, Clone)]
-    pub struct BatchRequestItem {
-        /// A unique identifier for this request.
-        pub custom_id: String,
-        /// The HTTP method to use for this request.
-        pub method: String,
-        /// The URL to send this request to.
-        pub url: String,
-        /// The body of the request.
-        pub body: Value,
-    }
-
-    /// A response item from a batch.
-    #[derive(Deserialize, Debug, Clone)]
-    pub struct BatchResponseItem {
-        /// The ID of this response.
-        pub id: String,
-        /// The custom ID that was provided in the request.
-        pub custom_id: String,
-        /// The response from the API.
-        pub response: Option<BatchItemResponse>,
-        /// The error from the API, if any.
-        pub error: Option<BatchItemError>,
-    }
-
-    /// A response from a batch item.
-    #[derive(Deserialize, Debug, Clone)]
-    pub struct BatchItemResponse {
-        /// The HTTP status code of the response.
-        pub status_code: u16,
-        /// The request ID of the response.
-        pub request_id: String,
-        /// The body of the response.
-        pub body: Value,
-    }
-
-    /// An error from a batch item.
-    #[derive(Deserialize, Debug, Clone)]
-    pub struct BatchItemError {
-        /// The error code.
-        pub code: String,
-        /// The error message.
-        pub message: String,
-    }
-
-    /// A batch object.
-    #[derive(Deserialize, Debug, Clone)]
-    pub struct Batch {
-        /// The ID of the batch.
-        pub id: String,
-        /// The object type, always "batch".
-        pub object: String,
-        /// The endpoint that this batch is for.
-        pub endpoint: String,
-        /// Any errors that occurred during batch creation.
-        pub errors: Option<Value>,
-        /// The ID of the input file.
-        pub input_file_id: String,
-        /// The completion window for this batch.
-        pub completion_window: String,
-        /// The status of the batch.
-        pub status: String,
-        /// The ID of the output file, if available.
-        pub output_file_id: Option<String>,
-        /// The ID of the error file, if available.
-        pub error_file_id: Option<String>,
-        /// When the batch was created.
-        pub created_at: u64,
-        /// When the batch started processing.
-        pub in_progress_at: Option<u64>,
-        /// When the batch expires.
-        pub expires_at: Option<u64>,
-        /// When the batch completed.
-        pub completed_at: Option<u64>,
-        /// When the batch failed.
-        pub failed_at: Option<u64>,
-        /// When the batch expired.
-        pub expired_at: Option<u64>,
-        /// The number of requests in the batch.
-        pub request_counts: BatchRequestCounts,
-        /// Custom metadata for the batch.
-        pub metadata: Option<Value>,
-    }
-
-    /// The number of requests in a batch.
-    #[derive(Deserialize, Debug, Clone)]
-    pub struct BatchRequestCounts {
-        /// The total number of requests in the batch.
-        pub total: u32,
-        /// The number of completed requests in the batch.
-        pub completed: u32,
-        /// The number of failed requests in the batch.
-        pub failed: u32,
-    }
-
-    /// A list of batches.
-    #[derive(Deserialize, Debug, Clone)]
-    pub struct BatchList {
-        /// The list of batches.
-        pub data: Vec<Batch>,
-        /// The object type, always "list".
-        pub object: String,
-        /// Whether there are more batches to fetch.
-        pub has_more: bool,
-    }
-
-    impl BatchRequestItem {
-        /// Create a new batch request item for the chat completions API.
-        pub fn new_chat(
-            custom_id: impl Into<String>,
-            model: impl Into<String>,
-            messages: Vec<Value>,
-        ) -> Self {
-            Self {
-                custom_id: custom_id.into(),
-                method: "POST".to_string(),
-                url: "/v1/chat/completions".to_string(),
-                body: serde_json::json!({
-                    "model": model.into(),
-                    "messages": messages,
-                    "max_tokens": 1000,
-                }),
-            }
-        }
-
-        /// Create a new batch request item for the embeddings API.
-        pub fn new_embedding(
-            custom_id: impl Into<String>,
-            model: impl Into<String>,
-            input: Vec<String>,
-        ) -> Self {
-            Self {
-                custom_id: custom_id.into(),
-                method: "POST".to_string(),
-                url: "/v1/embeddings".to_string(),
-                body: serde_json::json!({
-                    "model": model.into(),
-                    "input": input,
-                }),
-            }
-        }
-
-        /// Create a new batch request item for the completions API.
-        pub fn new_completion(
-            custom_id: impl Into<String>,
-            model: impl Into<String>,
-            prompt: impl Into<String>,
-        ) -> Self {
-            Self {
-                custom_id: custom_id.into(),
-                method: "POST".to_string(),
-                url: "/v1/completions".to_string(),
-                body: serde_json::json!({
-                    "model": model.into(),
-                    "prompt": prompt.into(),
-                    "max_tokens": 1000,
-                }),
-            }
-        }
-
-        /// Create a new batch request item for the responses API.
-        pub fn new_response(
-            custom_id: impl Into<String>,
-            model: impl Into<String>,
-            prompt: impl Into<String>,
-        ) -> Self {
-            Self {
-                custom_id: custom_id.into(),
-                method: "POST".to_string(),
-                url: "/v1/responses".to_string(),
-                body: serde_json::json!({
-                    "model": model.into(),
-                    "prompt": prompt.into(),
-                    "max_tokens": 1000,
-                }),
-            }
-        }
-    }
-
-    impl ChatClient {
-        fn batches_url(&self) -> url::Url {
-            self.base_url.join(&self.batches_path).unwrap()
-        }
-
-        /// Create a batch file from a list of batch request items.
-        pub async fn create_batch_file(
-            &self,
-            filename: impl AsRef<str>,
-            requests: &[BatchRequestItem],
-        ) -> Result<String, BatchError> {
-            let files_client = FilesClient::from(self);
-
-            // Create a temporary file
-            let temp_path = std::env::temp_dir().join(filename.as_ref());
-            let mut file = std::fs::File::create(&temp_path)?;
-
-            // Write each request as a JSON line
-            for request in requests {
-                let json = serde_json::to_string(request).unwrap(); // todo: remove unwrap
-                writeln!(file, "{}", json)?;
-            }
-            file.flush()?;
-
-            // Upload the file
-            let file_obj = files_client
-                .upload_file(&temp_path, FilePurpose::Batch)
-                .await?;
-
-            // Clean up the temporary file
-            std::fs::remove_file(temp_path)?;
-
-            Ok(file_obj.id)
-        }
-
-        /// Create a batch from a file ID.
-        pub async fn create_batch(
-            &self,
-            input_file_id: impl AsRef<str>,
-            endpoint: impl AsRef<str>,
-        ) -> Result<Batch, BatchError> {
-            let client = Client::new();
-            let url = remove_trailing_slash(self.batches_url());
-            let response = client
-                .post(url)
-                .header("Authorization", format!("Bearer {}", self.api_key))
-                .header("Content-Type", "application/json")
-                .json(&serde_json::json!({
-                    "input_file_id": input_file_id.as_ref(),
-                    "endpoint": endpoint.as_ref(),
-                    "completion_window": "24h"
-                }))
-                .send()
-                .await?;
-
-            let response_text = response.text().await?;
-            let batch: Result<Batch, serde_json::Error> = serde_json::from_str(&response_text);
-
-            match batch {
-                Ok(batch) => Ok(batch),
-                Err(e) => {
-                    // Try to parse as an OpenAI error
-                    let error: Result<OpenAiError, _> = serde_json::from_str(&response_text);
-                    match error {
-                        Ok(error) => Err(BatchError::OpenAiError(error)),
-                        Err(_) => Err(BatchError::JsonParseError(e, response_text)),
-                    }
-                }
-            }
-        }
-
-        /// Get the status of a batch.
-        pub async fn get_batch_status(&self, batch_id: &str) -> Result<Batch, BatchError> {
-            let client = Client::new();
-            let url = self.batches_url().join(batch_id).unwrap();
-            let response = client
-                .get(url)
-                .header("Authorization", format!("Bearer {}", self.api_key))
-                .header("Content-Type", "application/json")
-                .send()
-                .await?;
-
-            let response_text = response.text().await?;
-            let batch: Result<Batch, serde_json::Error> = serde_json::from_str(&response_text);
-
-            match batch {
-                Ok(batch) => Ok(batch),
-                Err(e) => {
-                    // Try to parse as an OpenAI error
-                    let error: Result<OpenAiError, _> = serde_json::from_str(&response_text);
-                    match error {
-                        Ok(error) => Err(BatchError::OpenAiError(error)),
-                        Err(_) => Err(BatchError::JsonParseError(e, response_text)),
-                    }
-                }
-            }
-        }
-
-        /// Wait for a batch to complete.
-        pub async fn wait_for_batch(&self, batch_id: &str) -> Result<Batch, BatchError> {
-            let mut attempts = 0;
-            let max_attempts = 100; // Limit the number of attempts to avoid infinite loops
-
-            loop {
-                let batch = self.get_batch_status(batch_id).await?;
-
-                match batch.status.as_str() {
-                    "completed" => return Ok(batch),
-                    "failed" => return Err(BatchError::BatchFailed(batch_id.to_string())),
-                    "expired" => return Err(BatchError::BatchExpired(batch_id.to_string())),
-                    "cancelled" => return Err(BatchError::BatchCancelled(batch_id.to_string())),
-                    _ => {
-                        // Still in progress, wait and try again
-                        attempts += 1;
-                        if attempts >= max_attempts {
-                            return Err(BatchError::BatchTimeout(batch_id.to_string()));
-                        }
-
-                        // Exponential backoff with a cap
-                        let delay = std::cmp::min(30, 2_u64.pow(attempts)) as u64;
-                        sleep(Duration::from_secs(delay)).await;
-                    }
-                }
-            }
-        }
-
-        /// Get the results of a batch.
-        pub async fn get_batch_results(
-            &self,
-            batch: &Batch,
-        ) -> Result<Vec<BatchResponseItem>, BatchError> {
-            let files_client = FilesClient::from(self);
-
-            if batch.status != "completed" {
-                return Err(BatchError::Other(format!(
-                    "Batch is not completed: {}",
-                    batch.status
-                )));
-            }
-
-            let output_file_id = batch
-                .output_file_id
-                .as_ref()
-                .ok_or_else(|| BatchError::Other("Batch has no output file".to_string()))?;
-
-            let content = files_client.download_file(output_file_id).await?;
-
-            let mut results = Vec::new();
-            for line in content.lines() {
-                let result: BatchResponseItem = serde_json::from_str(line)
-                    .map_err(|e| BatchError::JsonParseError(e, line.to_string()))?;
-                results.push(result);
-            }
-
-            Ok(results)
-        }
-
-        /// Get the errors of a batch.
-        pub async fn get_batch_errors(
-            &self,
-            batch: &Batch,
-        ) -> Result<Vec<BatchResponseItem>, BatchError> {
-            let files_client = FilesClient::from(self);
-
-            let error_file_id = batch
-                .error_file_id
-                .as_ref()
-                .ok_or_else(|| BatchError::Other("Batch has no error file".to_string()))?;
-
-            let content = files_client.download_file(error_file_id).await?;
-
-            let mut errors = Vec::new();
-            for line in content.lines() {
-                let error: BatchResponseItem = serde_json::from_str(line)
-                    .map_err(|e| BatchError::JsonParseError(e, line.to_string()))?;
-                errors.push(error);
-            }
-
-            Ok(errors)
-        }
-
-        /// Cancel a batch.
-        pub async fn cancel_batch(&self, batch_id: &str) -> Result<Batch, BatchError> {
-            let client = Client::new();
-            let response = client
-                .post(
-                    self.batches_url()
-                        .join(batch_id)
-                        .unwrap()
-                        .join("cancel")
-                        .unwrap(),
-                )
-                .header("Authorization", format!("Bearer {}", self.api_key))
-                .header("Content-Type", "application/json")
-                .send()
-                .await?;
-
-            let response_text = response.text().await?;
-            let batch: Result<Batch, serde_json::Error> = serde_json::from_str(&response_text);
-
-            match batch {
-                Ok(batch) => Ok(batch),
-                Err(e) => {
-                    // Try to parse as an OpenAI error
-                    let error: Result<OpenAiError, _> = serde_json::from_str(&response_text);
-                    match error {
-                        Ok(error) => Err(BatchError::OpenAiError(error)),
-                        Err(_) => Err(BatchError::JsonParseError(e, response_text)),
-                    }
-                }
-            }
-        }
-
-        /// List all batches.
-        pub async fn list_batches(
-            &self,
-            limit: Option<u32>,
-            after: Option<&str>,
-        ) -> Result<BatchList, BatchError> {
-            let mut url = self.batches_url();
-
-            // Add query parameters
-            let mut query_params = Vec::new();
-            if let Some(limit) = limit {
-                query_params.push(format!("limit={}", limit));
-            }
-            if let Some(after) = after {
-                query_params.push(format!("after={}", after));
-            }
-            if !query_params.is_empty() {
-                url.set_query(Some(&query_params.join("&")));
-            }
-
-            let client = Client::new();
-            let response = client
-                .get(url)
-                .header("Authorization", format!("Bearer {}", self.api_key))
-                .header("Content-Type", "application/json")
-                .send()
-                .await?;
-
-            let response_text = response.text().await?;
-            let batch_list: Result<BatchList, serde_json::Error> =
-                serde_json::from_str(&response_text);
-
-            match batch_list {
-                Ok(batch_list) => Ok(batch_list),
-                Err(e) => {
-                    // Try to parse as an OpenAI error
-                    let error: Result<OpenAiError, _> = serde_json::from_str(&response_text);
-                    match error {
-                        Ok(error) => Err(BatchError::OpenAiError(error)),
-                        Err(_) => Err(BatchError::JsonParseError(e, response_text)),
-                    }
-                }
-            }
-        }
-    }
-}
-
 /// To use this library, you need to create a [`ChatClient`]. This contains various information needed to interact with the ChatGPT API,
 /// such as the API key, the model to use, and the URL of the API.
 ///
@@ -1130,6 +572,565 @@ impl ChatClient {
     /// Does not double-count tokens used in cached responses.
     pub fn usage(&self) -> ChatUsage {
         *self.usage.read().unwrap()
+    }
+}
+
+/// Batch API for processing large numbers of requests asynchronously.
+///
+/// The Batch API allows you to send asynchronous groups of requests with 50% lower costs,
+/// a separate pool of significantly higher rate limits, and a clear 24-hour turnaround time.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// # use tysm::chat_completions::{ChatClient, batch::BatchRequestItem};
+/// # use serde_json::json;
+/// # use tokio_test::block_on;
+/// # block_on(async {
+/// let client = ChatClient::from_env("gpt-4o").unwrap();
+///
+/// // Create batch requests
+/// let requests = vec![
+///     BatchRequestItem::new_chat(
+///         "request-1",
+///         "gpt-4o",
+///         vec![
+///             json!({"role": "system", "content": "You are a helpful assistant."}),
+///             json!({"role": "user", "content": "Hello world!"}),
+///         ],
+///     ),
+///     BatchRequestItem::new_chat(
+///         "request-2",
+///         "gpt-4o",
+///         vec![
+///             json!({"role": "system", "content": "You are an unhelpful assistant."}),
+///             json!({"role": "user", "content": "Hello world!"}),
+///         ],
+///     ),
+/// ];
+///
+/// // Create a batch file
+/// let file_id = client.create_batch_file("my_batch.jsonl", &requests).await.unwrap();
+///
+/// // Create a batch
+/// let batch = client.create_batch(file_id, "/v1/chat/completions").await.unwrap();
+/// println!("Batch created: {}", batch.id);
+///
+/// // Check batch status
+/// let status = client.get_batch_status(&batch.id).await.unwrap();
+/// println!("Batch status: {}", status.status);
+///
+/// // Wait for batch to complete
+/// let completed_batch = client.wait_for_batch(&batch.id).await.unwrap();
+///
+/// // Get batch results
+/// let results = client.get_batch_results(&completed_batch).await.unwrap();
+/// for result in results {
+///     println!("Result for {}: {}", result.custom_id, result.response.unwrap().body);
+/// }
+/// # });
+/// ```
+pub mod batch {
+    use reqwest::Client;
+    use serde::{Deserialize, Serialize};
+    use serde_json::Value;
+    use std::io::Write;
+
+    use std::time::Duration;
+    use thiserror::Error;
+    use tokio::time::sleep;
+
+    use super::*;
+    use crate::files::{FilePurpose, FilesClient, FilesError};
+    use crate::utils::remove_trailing_slash;
+    use crate::OpenAiError;
+
+    /// Errors that can occur when interacting with the Batch API.
+    #[derive(Error, Debug)]
+    pub enum BatchError {
+        /// An error occurred when sending the request to the API.
+        #[error("Request error: {0}")]
+        RequestError(#[from] reqwest::Error),
+
+        /// An error occurred when serializing or deserializing JSON.
+        #[error("JSON error when parsing {1}")]
+        JsonParseError(#[source] serde_json::Error, String),
+
+        /// An error occurred with file operations.
+        #[error("File error: {0}")]
+        FileError(#[from] std::io::Error),
+
+        /// An error occurred with the Files API.
+        #[error("Files API error: {0}")]
+        FilesApiError(#[from] FilesError),
+
+        /// An error occurred with the Chat API.
+        #[error("Chat API error: {0}")]
+        ChatError(#[from] ChatError),
+
+        /// An error occurred with the OpenAI API.
+        #[error("OpenAI API error: {0}")]
+        OpenAiError(#[from] OpenAiError),
+
+        /// The batch has expired.
+        #[error("Batch expired: {0}")]
+        BatchExpired(String),
+
+        /// The batch has failed.
+        #[error("Batch failed: {0}")]
+        BatchFailed(String),
+
+        /// The batch was cancelled.
+        #[error("Batch cancelled: {0}")]
+        BatchCancelled(String),
+
+        /// Timeout waiting for batch to complete.
+        #[error("Timeout waiting for batch to complete: {0}")]
+        BatchTimeout(String),
+
+        /// Other batch error.
+        #[error("Batch error: {0}")]
+        Other(String),
+    }
+
+    /// A request item for a batch.
+    #[derive(Serialize, Deserialize, Debug, Clone)]
+    pub struct BatchRequestItem {
+        /// A unique identifier for this request.
+        pub custom_id: String,
+        /// The HTTP method to use for this request.
+        pub method: String,
+        /// The URL to send this request to.
+        pub url: String,
+        /// The body of the request.
+        pub body: Value,
+    }
+
+    /// A response item from a batch.
+    #[derive(Deserialize, Debug, Clone)]
+    pub struct BatchResponseItem {
+        /// The ID of this response.
+        pub id: String,
+        /// The custom ID that was provided in the request.
+        pub custom_id: String,
+        /// The response from the API.
+        pub response: Option<BatchItemResponse>,
+        /// The error from the API, if any.
+        pub error: Option<BatchItemError>,
+    }
+
+    /// A response from a batch item.
+    #[derive(Deserialize, Debug, Clone)]
+    pub struct BatchItemResponse {
+        /// The HTTP status code of the response.
+        pub status_code: u16,
+        /// The request ID of the response.
+        pub request_id: String,
+        /// The body of the response.
+        pub body: Value,
+    }
+
+    /// An error from a batch item.
+    #[derive(Deserialize, Debug, Clone)]
+    pub struct BatchItemError {
+        /// The error code.
+        pub code: String,
+        /// The error message.
+        pub message: String,
+    }
+
+    /// A batch object.
+    #[derive(Deserialize, Debug, Clone)]
+    pub struct Batch {
+        /// The ID of the batch.
+        pub id: String,
+        /// The object type, always "batch".
+        pub object: String,
+        /// The endpoint that this batch is for.
+        pub endpoint: String,
+        /// Any errors that occurred during batch creation.
+        pub errors: Option<Value>,
+        /// The ID of the input file.
+        pub input_file_id: String,
+        /// The completion window for this batch.
+        pub completion_window: String,
+        /// The status of the batch.
+        pub status: String,
+        /// The ID of the output file, if available.
+        pub output_file_id: Option<String>,
+        /// The ID of the error file, if available.
+        pub error_file_id: Option<String>,
+        /// When the batch was created.
+        pub created_at: u64,
+        /// When the batch started processing.
+        pub in_progress_at: Option<u64>,
+        /// When the batch expires.
+        pub expires_at: Option<u64>,
+        /// When the batch completed.
+        pub completed_at: Option<u64>,
+        /// When the batch failed.
+        pub failed_at: Option<u64>,
+        /// When the batch expired.
+        pub expired_at: Option<u64>,
+        /// The number of requests in the batch.
+        pub request_counts: BatchRequestCounts,
+        /// Custom metadata for the batch.
+        pub metadata: Option<Value>,
+    }
+
+    /// The number of requests in a batch.
+    #[derive(Deserialize, Debug, Clone)]
+    pub struct BatchRequestCounts {
+        /// The total number of requests in the batch.
+        pub total: u32,
+        /// The number of completed requests in the batch.
+        pub completed: u32,
+        /// The number of failed requests in the batch.
+        pub failed: u32,
+    }
+
+    /// A list of batches.
+    #[derive(Deserialize, Debug, Clone)]
+    pub struct BatchList {
+        /// The list of batches.
+        pub data: Vec<Batch>,
+        /// The object type, always "list".
+        pub object: String,
+        /// Whether there are more batches to fetch.
+        pub has_more: bool,
+    }
+
+    impl BatchRequestItem {
+        /// Create a new batch request item for the chat completions API.
+        pub fn new_chat(
+            custom_id: impl Into<String>,
+            model: impl Into<String>,
+            messages: Vec<Value>,
+        ) -> Self {
+            Self {
+                custom_id: custom_id.into(),
+                method: "POST".to_string(),
+                url: "/v1/chat/completions".to_string(),
+                body: serde_json::json!({
+                    "model": model.into(),
+                    "messages": messages,
+                    "max_tokens": 1000,
+                }),
+            }
+        }
+
+        /// Create a new batch request item for the embeddings API.
+        pub fn new_embedding(
+            custom_id: impl Into<String>,
+            model: impl Into<String>,
+            input: Vec<String>,
+        ) -> Self {
+            Self {
+                custom_id: custom_id.into(),
+                method: "POST".to_string(),
+                url: "/v1/embeddings".to_string(),
+                body: serde_json::json!({
+                    "model": model.into(),
+                    "input": input,
+                }),
+            }
+        }
+
+        /// Create a new batch request item for the completions API.
+        pub fn new_completion(
+            custom_id: impl Into<String>,
+            model: impl Into<String>,
+            prompt: impl Into<String>,
+        ) -> Self {
+            Self {
+                custom_id: custom_id.into(),
+                method: "POST".to_string(),
+                url: "/v1/completions".to_string(),
+                body: serde_json::json!({
+                    "model": model.into(),
+                    "prompt": prompt.into(),
+                    "max_tokens": 1000,
+                }),
+            }
+        }
+
+        /// Create a new batch request item for the responses API.
+        pub fn new_response(
+            custom_id: impl Into<String>,
+            model: impl Into<String>,
+            prompt: impl Into<String>,
+        ) -> Self {
+            Self {
+                custom_id: custom_id.into(),
+                method: "POST".to_string(),
+                url: "/v1/responses".to_string(),
+                body: serde_json::json!({
+                    "model": model.into(),
+                    "prompt": prompt.into(),
+                    "max_tokens": 1000,
+                }),
+            }
+        }
+    }
+
+    impl ChatClient {
+        fn batches_url(&self) -> url::Url {
+            self.base_url.join(&self.batches_path).unwrap()
+        }
+
+        /// Create a batch file from a list of batch request items.
+        pub async fn create_batch_file(
+            &self,
+            filename: impl AsRef<str>,
+            requests: &[BatchRequestItem],
+        ) -> Result<String, BatchError> {
+            let files_client = FilesClient::from(self);
+
+            // Create a temporary file
+            let temp_path = std::env::temp_dir().join(filename.as_ref());
+            let mut file = std::fs::File::create(&temp_path)?;
+
+            // Write each request as a JSON line
+            for request in requests {
+                let json = serde_json::to_string(request).unwrap(); // cannot panic
+                writeln!(file, "{}", json)?;
+            }
+            file.flush()?;
+
+            // Upload the file
+            let file_obj = files_client
+                .upload_file(&temp_path, FilePurpose::Batch)
+                .await?;
+
+            // Clean up the temporary file
+            std::fs::remove_file(temp_path)?;
+
+            Ok(file_obj.id)
+        }
+
+        /// Create a batch from a file ID.
+        pub async fn create_batch(
+            &self,
+            input_file_id: impl AsRef<str>,
+            endpoint: impl AsRef<str>,
+        ) -> Result<Batch, BatchError> {
+            let client = Client::new();
+            let url = remove_trailing_slash(self.batches_url());
+            let response = client
+                .post(url)
+                .header("Authorization", format!("Bearer {}", self.api_key))
+                .header("Content-Type", "application/json")
+                .json(&serde_json::json!({
+                    "input_file_id": input_file_id.as_ref(),
+                    "endpoint": endpoint.as_ref(),
+                    "completion_window": "24h"
+                }))
+                .send()
+                .await?;
+
+            let response_text = response.text().await?;
+            let batch: Result<Batch, serde_json::Error> = serde_json::from_str(&response_text);
+
+            match batch {
+                Ok(batch) => Ok(batch),
+                Err(e) => {
+                    // Try to parse as an OpenAI error
+                    let error: Result<OpenAiError, _> = serde_json::from_str(&response_text);
+                    match error {
+                        Ok(error) => Err(BatchError::OpenAiError(error)),
+                        Err(_) => Err(BatchError::JsonParseError(e, response_text)),
+                    }
+                }
+            }
+        }
+
+        /// Get the status of a batch.
+        pub async fn get_batch_status(&self, batch_id: &str) -> Result<Batch, BatchError> {
+            let client = Client::new();
+            let url = self.batches_url().join(batch_id).unwrap();
+            let response = client
+                .get(url)
+                .header("Authorization", format!("Bearer {}", self.api_key))
+                .header("Content-Type", "application/json")
+                .send()
+                .await?;
+
+            let response_text = response.text().await?;
+            let batch: Result<Batch, serde_json::Error> = serde_json::from_str(&response_text);
+
+            match batch {
+                Ok(batch) => Ok(batch),
+                Err(e) => {
+                    // Try to parse as an OpenAI error
+                    let error: Result<OpenAiError, _> = serde_json::from_str(&response_text);
+                    match error {
+                        Ok(error) => Err(BatchError::OpenAiError(error)),
+                        Err(_) => Err(BatchError::JsonParseError(e, response_text)),
+                    }
+                }
+            }
+        }
+
+        /// Wait for a batch to complete.
+        pub async fn wait_for_batch(&self, batch_id: &str) -> Result<Batch, BatchError> {
+            let mut attempts = 0;
+            let mut seconds_waited = 0;
+
+            loop {
+                let batch = self.get_batch_status(batch_id).await?;
+
+                match batch.status.as_str() {
+                    "completed" => return Ok(batch),
+                    "failed" => return Err(BatchError::BatchFailed(batch_id.to_string())),
+                    "expired" => return Err(BatchError::BatchExpired(batch_id.to_string())),
+                    "cancelled" => return Err(BatchError::BatchCancelled(batch_id.to_string())),
+                    _ => {
+                        attempts += 1;
+                        // Still in progress, wait and try again
+                        if seconds_waited >= 86400 {
+                            return Err(BatchError::BatchTimeout(batch_id.to_string()));
+                        }
+
+                        // Exponential backoff with a cap
+                        let delay = std::cmp::min(120, 2_u64.pow(attempts)) as u64;
+                        sleep(Duration::from_secs(delay)).await;
+                        seconds_waited += delay;
+                    }
+                }
+            }
+        }
+
+        /// Get the results of a batch.
+        pub async fn get_batch_results(
+            &self,
+            batch: &Batch,
+        ) -> Result<Vec<BatchResponseItem>, BatchError> {
+            let files_client = FilesClient::from(self);
+
+            if batch.status != "completed" {
+                return Err(BatchError::Other(format!(
+                    "Batch is not completed: {}",
+                    batch.status
+                )));
+            }
+
+            let output_file_id = batch
+                .output_file_id
+                .as_ref()
+                .ok_or_else(|| BatchError::Other("Batch has no output file".to_string()))?;
+
+            let content = files_client.download_file(output_file_id).await?;
+
+            let mut results = Vec::new();
+            for line in content.lines() {
+                let result: BatchResponseItem = serde_json::from_str(line)
+                    .map_err(|e| BatchError::JsonParseError(e, line.to_string()))?;
+                results.push(result);
+            }
+
+            Ok(results)
+        }
+
+        /// Get the errors of a batch.
+        pub async fn get_batch_errors(
+            &self,
+            batch: &Batch,
+        ) -> Result<Vec<BatchResponseItem>, BatchError> {
+            let files_client = FilesClient::from(self);
+
+            let error_file_id = batch
+                .error_file_id
+                .as_ref()
+                .ok_or_else(|| BatchError::Other("Batch has no error file".to_string()))?;
+
+            let content = files_client.download_file(error_file_id).await?;
+
+            let mut errors = Vec::new();
+            for line in content.lines() {
+                let error: BatchResponseItem = serde_json::from_str(line)
+                    .map_err(|e| BatchError::JsonParseError(e, line.to_string()))?;
+                errors.push(error);
+            }
+
+            Ok(errors)
+        }
+
+        /// Cancel a batch.
+        pub async fn cancel_batch(&self, batch_id: &str) -> Result<Batch, BatchError> {
+            let client = Client::new();
+            let response = client
+                .post(
+                    self.batches_url()
+                        .join(batch_id)
+                        .unwrap()
+                        .join("cancel")
+                        .unwrap(),
+                )
+                .header("Authorization", format!("Bearer {}", self.api_key))
+                .header("Content-Type", "application/json")
+                .send()
+                .await?;
+
+            let response_text = response.text().await?;
+            let batch: Result<Batch, serde_json::Error> = serde_json::from_str(&response_text);
+
+            match batch {
+                Ok(batch) => Ok(batch),
+                Err(e) => {
+                    // Try to parse as an OpenAI error
+                    let error: Result<OpenAiError, _> = serde_json::from_str(&response_text);
+                    match error {
+                        Ok(error) => Err(BatchError::OpenAiError(error)),
+                        Err(_) => Err(BatchError::JsonParseError(e, response_text)),
+                    }
+                }
+            }
+        }
+
+        /// List all batches.
+        pub async fn list_batches(
+            &self,
+            limit: Option<u32>,
+            after: Option<&str>,
+        ) -> Result<BatchList, BatchError> {
+            let mut url = self.batches_url();
+
+            // Add query parameters
+            let mut query_params = Vec::new();
+            if let Some(limit) = limit {
+                query_params.push(format!("limit={}", limit));
+            }
+            if let Some(after) = after {
+                query_params.push(format!("after={}", after));
+            }
+            if !query_params.is_empty() {
+                url.set_query(Some(&query_params.join("&")));
+            }
+
+            let client = Client::new();
+            let response = client
+                .get(url)
+                .header("Authorization", format!("Bearer {}", self.api_key))
+                .header("Content-Type", "application/json")
+                .send()
+                .await?;
+
+            let response_text = response.text().await?;
+            let batch_list: Result<BatchList, serde_json::Error> =
+                serde_json::from_str(&response_text);
+
+            match batch_list {
+                Ok(batch_list) => Ok(batch_list),
+                Err(e) => {
+                    // Try to parse as an OpenAI error
+                    let error: Result<OpenAiError, _> = serde_json::from_str(&response_text);
+                    match error {
+                        Ok(error) => Err(BatchError::OpenAiError(error)),
+                        Err(_) => Err(BatchError::JsonParseError(e, response_text)),
+                    }
+                }
+            }
+        }
     }
 }
 

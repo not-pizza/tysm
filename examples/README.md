@@ -33,6 +33,7 @@ Where `<example_name>` is one of:
 - `chat-completions`
 - `embeddings`
 - `files`
+- `batch-completions`
 
 ## Examples Overview
 

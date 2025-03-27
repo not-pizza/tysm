@@ -47,3 +47,7 @@ path = "examples/embeddings.rs"
 [[example]]
 name = "files"
 path = "examples/files.rs"
+
+[[example]]
+name = "batch-completions"
+path = "examples/batch_completions.rs"

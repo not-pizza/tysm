@@ -4,12 +4,8 @@ use tysm::chat_completions::{batch::BatchRequestItem, ChatClient};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Load API key from environment
-    dotenv::dotenv().ok();
-    let api_key = env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY must be set");
-
     // Create a client
-    let client = ChatClient::new(api_key, "gpt-4o");
+    let client = ChatClient::from_env("gpt-4o").unwrap();
 
     println!("Creating batch requests...");
 
