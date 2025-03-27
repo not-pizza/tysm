@@ -18,9 +18,17 @@ pub struct FilesClient {
     /// The API key to use for the OpenAI API.
     pub api_key: String,
     /// The base URL of the OpenAI API.
-    pub base_url: String,
+    pub url: String,
 }
 
+impl From<crate::chat_completions::ChatClient> for FilesClient {
+    fn from(client: crate::chat_completions::ChatClient) -> Self {
+        Self {
+            api_key: client.api_key,
+            url: client.url,
+        }
+    }
+}
 /// The purpose of a file in the OpenAI API.
 #[derive(Serialize, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
@@ -134,7 +142,7 @@ impl FilesClient {
     pub fn new(api_key: impl Into<String>) -> Self {
         Self {
             api_key: api_key.into(),
-            base_url: "https://api.openai.com/v1".into(),
+            url: "https://api.openai.com/v1".into(),
         }
     }
 
@@ -183,7 +191,7 @@ impl FilesClient {
 
         let client = Client::new();
         let response = client
-            .post(format!("{}/files", self.base_url))
+            .post(format!("{}/files", self.url))
             .header("Authorization", format!("Bearer {}", self.api_key))
             .multipart(form)
             .send()
@@ -227,7 +235,7 @@ impl FilesClient {
 
         let client = Client::new();
         let response = client
-            .post(format!("{}/files", self.base_url))
+            .post(format!("{}/files", self.url))
             .header("Authorization", format!("Bearer {}", self.api_key))
             .multipart(form)
             .send()
@@ -261,7 +269,7 @@ impl FilesClient {
     pub async fn list_files(&self) -> Result<FileList, FilesError> {
         let client = Client::new();
         let response = client
-            .get(format!("{}/files", self.base_url))
+            .get(format!("{}/files", self.url))
             .header("Authorization", format!("Bearer {}", self.api_key))
             .send()
             .await?;
@@ -284,7 +292,7 @@ impl FilesClient {
     pub async fn retrieve_file(&self, file_id: &str) -> Result<FileObject, FilesError> {
         let client = Client::new();
         let response = client
-            .get(format!("{}/files/{}", self.base_url, file_id))
+            .get(format!("{}/files/{}", self.url, file_id))
             .header("Authorization", format!("Bearer {}", self.api_key))
             .send()
             .await?;
@@ -307,7 +315,7 @@ impl FilesClient {
     pub async fn delete_file(&self, file_id: &str) -> Result<DeletedFile, FilesError> {
         let client = Client::new();
         let response = client
-            .delete(format!("{}/files/{}", self.base_url, file_id))
+            .delete(format!("{}/files/{}", self.url, file_id))
             .header("Authorization", format!("Bearer {}", self.api_key))
             .send()
             .await?;
@@ -330,7 +338,7 @@ impl FilesClient {
     pub async fn download_file(&self, file_id: &str) -> Result<String, FilesError> {
         let client = Client::new();
         let response = client
-            .get(format!("{}/files/{}/content", self.base_url, file_id))
+            .get(format!("{}/files/{}/content", self.url, file_id))
             .header("Authorization", format!("Bearer {}", self.api_key))
             .send()
             .await?;
