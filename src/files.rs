@@ -19,13 +19,46 @@ pub struct FilesClient {
 }
 
 /// The purpose of a file in the OpenAI API.
-#[derive(Debug, Serialize, Clone, Copy)]
+#[derive(Serialize, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
 pub enum FilePurpose {
     /// For fine-tuning models
+    #[serde(rename = "fine-tune")]
     FineTune,
     /// For assistants
+    #[serde(rename = "assistants")]
     Assistants,
+    /// For batch jobs
+    #[serde(rename = "batch")]
+    Batch,
+    /// For user data
+    #[serde(rename = "user_data")]
+    UserData,
+    /// For vision models
+    #[serde(rename = "vision")]
+    Vision,
+    /// For evals
+    #[serde(rename = "evals")]
+    Evals,
+}
+
+impl std::fmt::Debug for FilePurpose {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FilePurpose::FineTune => write!(f, "fine-tune"),
+            FilePurpose::Assistants => write!(f, "assistants"),
+            FilePurpose::Batch => write!(f, "batch"),
+            FilePurpose::UserData => write!(f, "user_data"),
+            FilePurpose::Vision => write!(f, "vision"),
+            FilePurpose::Evals => write!(f, "evals"),
+        }
+    }
+}
+
+impl std::fmt::Display for FilePurpose {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
 }
 
 /// A file in the OpenAI API.
@@ -150,13 +183,10 @@ impl FilesClient {
         // Print the response for debugging
         let response_text = response.text().await?;
         println!("API Response: {}", response_text);
-        
-        let file_object: FileObject = serde_json::from_str(&response_text)
-            .map_err(|e| {
-                eprintln!("Failed to parse response: {}", e);
-                FilesError::ApiResponseError(e)
-            })?;
-        
+
+        let file_object: FileObject =
+            serde_json::from_str(&response_text).map_err(|e| FilesError::ApiResponseError(e))?;
+
         Ok(file_object)
     }
 
@@ -195,13 +225,10 @@ impl FilesClient {
         // Print the response for debugging
         let response_text = response.text().await?;
         println!("API Response: {}", response_text);
-        
-        let file_object: FileObject = serde_json::from_str(&response_text)
-            .map_err(|e| {
-                eprintln!("Failed to parse response: {}", e);
-                FilesError::ApiResponseError(e)
-            })?;
-        
+
+        let file_object: FileObject =
+            serde_json::from_str(&response_text).map_err(|e| FilesError::ApiResponseError(e))?;
+
         Ok(file_object)
     }
 
