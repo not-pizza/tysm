@@ -22,8 +22,8 @@ async fn main() -> anyhow::Result<()> {
             "Document {}: \"{}\" -> Vector with {} dimensions (showing first 5: {:?}...)",
             i + 1,
             documents[i],
-            embedding.len(),
-            &embedding[..5.min(embedding.len())]
+            embedding.dimension(),
+            &embedding.elements[..5.min(embedding.dimension())]
         );
     }
 
@@ -36,16 +36,16 @@ async fn main() -> anyhow::Result<()> {
     println!(
         "Single document: \"{}\" -> Vector with {} dimensions (showing first 5: {:?}...)",
         single_document,
-        single_embedding.len(),
-        &single_embedding[..5.min(single_embedding.len())]
+        single_embedding.dimension(),
+        &single_embedding.elements[..5.min(single_embedding.dimension())]
     );
 
     // Example of calculating similarity between embeddings
-    if !embeddings.is_empty() && !single_embedding.is_empty() {
+    if !embeddings.is_empty() && !single_embedding.elements.is_empty() {
         println!("\nCalculating cosine similarity between embeddings:");
 
         for (i, doc_embedding) in embeddings.iter().enumerate() {
-            let similarity = cosine_similarity(doc_embedding, &single_embedding);
+            let similarity = doc_embedding.cosine_similarity(&single_embedding);
             println!(
                 "Similarity between document {} and single document: {:.4}",
                 i + 1,
@@ -55,18 +55,4 @@ async fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
-}
-
-// Helper function to calculate cosine similarity between two vectors
-fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
-    let dot_product: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
-
-    let magnitude_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
-    let magnitude_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
-
-    if magnitude_a == 0.0 || magnitude_b == 0.0 {
-        return 0.0;
-    }
-
-    dot_product / (magnitude_a * magnitude_b)
 }
