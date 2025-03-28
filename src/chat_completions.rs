@@ -702,6 +702,8 @@ impl ChatClient {
     }
 
     /// Send chat messages to the batch API and deserialize the responses into the given type.
+    /// 
+    /// This goes through the batch API, which is cheaper and has higher ratelimits, but is much higher-latency. The responses to the batch API stick around in OpenAI's servers for some time, and before starting a new batch request, `tysm` will automatically check if that same request has been made before (and reuse it if so).
     pub async fn batch_chat<T: DeserializeOwned + JsonSchema>(
         &self,
         prompts: Vec<impl Into<String>>,
@@ -709,8 +711,10 @@ impl ChatClient {
         self.batch_chat_with_system_prompt("", prompts).await
     }
 
-    /// Send chat messages to the batch API and deserialize the responses into the given type.
-    /// The system prompt is used to set the context of the conversation.
+    /// Send a batch of chat messages to the API and deserialize the responses into the given type.
+    /// The first argument, the system prompt, is used to tell the AI how to behave during the conversations.
+    ///
+    /// This goes through the batch API, which is cheaper and has higher ratelimits, but is much higher-latency. The responses to the batch API stick around in OpenAI's servers for some time, and before starting a new batch request, `tysm` will automatically check if that same request has been made before (and reuse it if so).
     pub async fn batch_chat_with_system_prompt<T: DeserializeOwned + JsonSchema>(
         &self,
         system_prompt: impl Into<String> + Clone,
@@ -740,7 +744,10 @@ impl ChatClient {
         self.batch_chat_with_messages(prompts).await
     }
 
-    /// Send many chat requests via the batch API and deserialize the responses into the given type.
+    /// Send a batch of sequences of chat messages to the API and deserialize the responses into the given type.
+    /// This is useful for more advanced use cases like chatbots, multi-turn conversations, or when you need to use [Vision](https://platform.openai.com/docs/guides/vision).
+    ///
+    /// This goes through the batch API, which is cheaper and has higher ratelimits, but is much higher-latency. The responses to the batch API stick around in OpenAI's servers for some time, and before starting a new batch request, `tysm` will automatically check if that same request has been made before (and reuse it if so).
     pub async fn batch_chat_with_messages<T: DeserializeOwned + JsonSchema>(
         &self,
         messages: Vec<Vec<ChatMessage>>,
@@ -769,7 +776,9 @@ impl ChatClient {
         Ok(chat_responses)
     }
 
-    /// Send many chat requests via the batch API.
+    /// Send a batch of sequences of chat messages to the API. It's called "chat_with_messages_raw" because it allows you to specify any response format, and doesn't attempt to deserialize the chat completion.
+    ///
+    /// This goes through the batch API, which is cheaper and has higher ratelimits, but is much higher-latency. The responses to the batch API stick around in OpenAI's servers for some time, and before starting a new batch request, `tysm` will automatically check if that same request has been made before (and reuse it if so).
     pub async fn batch_chat_with_messages_raw(
         &self,
         prompts: Vec<(Vec<ChatMessage>, ResponseFormat)>,
