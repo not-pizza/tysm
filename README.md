@@ -10,6 +10,7 @@ Including...
   - Automatic deserialization
   - Concise interface
   - Automatic local caching of API responses
+  - Batch API support
 - **Embeddings API**
   - Single and batch requests supported
 - **Files API**
