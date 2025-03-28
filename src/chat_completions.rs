@@ -750,7 +750,7 @@ impl ChatClient {
             .into_iter()
             .map(
                 |BatchResponseItem {
-                     id,
+                     id: _,
                      custom_id,
                      response,
                      error,
@@ -776,7 +776,7 @@ impl ChatClient {
             .map(|(custom_id, response)| match response {
                 ChatResponseOrError::Response(response) => Ok((custom_id, response)),
                 ChatResponseOrError::Error(error) => {
-                    return Err(BatchChatError::OpenAiError(error, custom_id));
+                    Err(BatchChatError::OpenAiError(error, custom_id))
                 }
             })
             .collect::<Result<HashMap<_, _>, BatchChatError>>()?;
