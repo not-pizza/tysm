@@ -702,7 +702,7 @@ impl ChatClient {
     }
 
     /// Send chat messages to the batch API and deserialize the responses into the given type.
-    /// 
+    ///
     /// This goes through the batch API, which is cheaper and has higher ratelimits, but is much higher-latency. The responses to the batch API stick around in OpenAI's servers for some time, and before starting a new batch request, `tysm` will automatically check if that same request has been made before (and reuse it if so).
     pub async fn batch_chat<T: DeserializeOwned + JsonSchema>(
         &self,
