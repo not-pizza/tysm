@@ -16,9 +16,24 @@ async fn main() -> anyhow::Result<()> {
         "What is the capital of France?",
         "What is the capital of Japan?",
         "What is the capital of Italy?",
+        "What is the capital of Germany?",
+        "What is the capital of Spain?",
+        "What is the capital of Portugal?",
+        "What is the capital of Greece?",
+        "What is the capital of Turkey?",
+        "What is the capital of Russia?",
+        "What is the capital of China?",
+        "What is the capital of Brazil?",
+        "What is the capital of Argentina?",
+        "What is the capital of Chile?",
+        "What is the capital of Mexico?",
+        "What is the capital of Canada?",
+        "What is the capital of Australia?",
+        "What is the capital of New Zealand?",
     ];
 
     // May take up to 24 hours, because it's a batch request
+    println!("Sending batch request... (this may take a while)");
     let responses = client.batch_chat::<Response>(requests).await?;
 
     for response in responses {
