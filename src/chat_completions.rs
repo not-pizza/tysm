@@ -809,6 +809,12 @@ impl ChatClient {
         let batch = all_batches
             .iter()
             .find(|batch| {
+                let still_active =
+                    ["completed", "in_progress", "validating"].contains(&batch.status.as_str());
+                if !still_active {
+                    return false;
+                }
+
                 batch
                     .metadata
                     .as_ref()
