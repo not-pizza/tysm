@@ -31,6 +31,13 @@ struct Embedding {
     index: usize,
 }
 
+/// A vector of floats. Returned as a result of embedding a document.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Vector {
+    /// The elements of the vector
+    pub elements: Vec<f32>,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct Usage {
     prompt_tokens: u32,
@@ -107,14 +114,14 @@ impl EmbeddingsClient {
     }
 
     /// Embed a single document into a vector space.
-    pub async fn embed_single(&self, document: String) -> Result<Vec<f32>, EmbeddingsError> {
+    pub async fn embed_single(&self, document: String) -> Result<Vector, EmbeddingsError> {
         let embeddings = self.embed(vec![document]).await?;
         Ok(embeddings.first().unwrap().clone())
     }
 
     /// Embed documents into a vector space.
     /// Documents are processed in batches of 100 to stay within API limits.
-    pub async fn embed(&self, documents: Vec<String>) -> Result<Vec<Vec<f32>>, EmbeddingsError> {
+    pub async fn embed(&self, documents: Vec<String>) -> Result<Vec<Vector>, EmbeddingsError> {
         const BATCH_SIZE: usize = 100;
         let documents_len = documents.len();
         let client = Client::new();
@@ -160,9 +167,18 @@ impl EmbeddingsClient {
                 return Err(EmbeddingsError::IncorrectNumberOfEmbeddings);
             }
 
-            all_embeddings.extend(embeddings_response.data.into_iter().map(|e| e.embedding));
+            all_embeddings.extend(embeddings_response.data.into_iter().map(|e| Vector {
+                elements: e.embedding,
+            }));
         }
 
         Ok(all_embeddings)
+    }
+}
+
+impl Vector {
+    /// Calculate the cosine similarity between two vectors.
+    pub fn cosine_similarity(&self, other: &Vector) -> f32 {
+        /// implement, AI!
     }
 }
