@@ -51,8 +51,8 @@ async fn main() -> anyhow::Result<()> {
     // Using a system prompt to guide the response
     let movie: MovieRecommendation = client
         .chat_with_system_prompt(
-            "Recommend a movie similar to The Matrix",
             "You are a film critic with expertise in sci-fi movies. Be concise but informative.",
+            "Recommend a movie similar to The Matrix",
         )
         .await?;
 

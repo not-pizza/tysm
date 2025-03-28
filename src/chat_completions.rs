@@ -3,7 +3,7 @@
 //!
 //! It also provides a batch API for processing large numbers of requests asynchronously.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::RwLock;
 
 use lru::LruCache;
@@ -445,6 +445,10 @@ pub enum BatchChatError {
         /// The response from the API.
         response: String,
     },
+
+    /// An error occurred when listing the batches.
+    #[error("Error listing batches")]
+    ListBatchesError(#[from] crate::batch::ListBatchesError),
 }
 
 impl ChatClient {
@@ -527,15 +531,39 @@ impl ChatClient {
         &self,
         prompt: impl Into<String>,
     ) -> Result<T, ChatError> {
-        self.chat_with_system_prompt(prompt, "").await
+        self.chat_with_system_prompt("", prompt).await
     }
 
     /// Send a chat message to the API and deserialize the response into the given type.
-    /// The system prompt is used to set the context of the conversation.
+    /// The first argument, the system prompt, is used to tell the AI how to behave during the conversation.
+    ///
+    /// ```rust
+    /// # use tysm::chat_completions::ChatClient;
+    /// #  let client = {
+    /// #     let my_api = url::Url::parse("https://g7edusstdonmn3vxdh3qdypkrq0wzttx.lambda-url.us-east-1.on.aws/v1/").unwrap();
+    /// #     ChatClient {
+    /// #         base_url: my_api,
+    /// #         ..ChatClient::from_env("gpt-4o").unwrap()
+    /// #     }
+    /// # };
+    ///
+    /// #[derive(serde::Deserialize, Debug, schemars::JsonSchema)]
+    /// struct CityName {
+    ///     english: String,
+    ///     local: String,
+    /// }
+    ///
+    /// # tokio_test::block_on(async {
+    /// let response: CityName = client.chat_with_system_prompt("You are an expert in cities", "What is the capital of Portugal?").await.unwrap();
+    ///
+    /// assert_eq!(response.english, "Lisbon");
+    /// assert_eq!(response.local, "Lisboa");
+    /// # })
+    /// ```
     pub async fn chat_with_system_prompt<T: DeserializeOwned + JsonSchema>(
         &self,
-        prompt: impl Into<String>,
         system_prompt: impl Into<String>,
+        prompt: impl Into<String>,
     ) -> Result<T, ChatError> {
         let prompt = prompt.into();
         let system_prompt = system_prompt.into();
@@ -557,6 +585,46 @@ impl ChatClient {
 
     /// Send a sequence of chat messages to the API and deserialize the response into the given type.
     /// This is useful for more advanced use cases like chatbots, multi-turn conversations, or when you need to use [Vision](https://platform.openai.com/docs/guides/vision).
+    ///
+    /// ```rust
+    /// # use tysm::chat_completions::ChatClient;
+    /// #  let client = {
+    /// #     let my_api = url::Url::parse("https://g7edusstdonmn3vxdh3qdypkrq0wzttx.lambda-url.us-east-1.on.aws/v1/").unwrap();
+    /// #     ChatClient {
+    /// #         base_url: my_api,
+    /// #         ..ChatClient::from_env("gpt-4o").unwrap()
+    /// #     }
+    /// # };
+    ///
+    /// #[derive(serde::Deserialize, Debug, schemars::JsonSchema)]
+    /// struct CityName {
+    ///     english: String,
+    ///     local: String,
+    /// }
+    ///
+    /// # use tysm::chat_completions::ChatMessageContent;
+    /// # use tysm::chat_completions::Role;
+    /// # use tysm::chat_completions::ChatMessage;
+    /// # tokio_test::block_on(async {
+    /// let response: CityName = client.chat_with_messages(vec![
+    ///     ChatMessage {
+    ///         role: Role::System,
+    ///         content: vec![ChatMessageContent::Text {
+    ///             text: "You are an expert on cities.".to_string(),
+    ///         }],
+    ///     },
+    ///     ChatMessage {
+    ///         role: Role::User,
+    ///         content: vec![ChatMessageContent::Text {
+    ///             text: "What is the capital of Portugal?".to_string(),
+    ///         }],
+    ///     }
+    /// ]).await.unwrap();
+    ///
+    /// assert_eq!(response.english, "Lisbon");
+    /// assert_eq!(response.local, "Lisboa");
+    /// # })
+    /// ```
     pub async fn chat_with_messages<T: DeserializeOwned + JsonSchema>(
         &self,
         messages: Vec<ChatMessage>,
@@ -638,15 +706,15 @@ impl ChatClient {
         &self,
         prompts: Vec<impl Into<String>>,
     ) -> Result<Vec<T>, BatchChatError> {
-        self.batch_chat_with_system_prompt(prompts, "").await
+        self.batch_chat_with_system_prompt("", prompts).await
     }
 
     /// Send chat messages to the batch API and deserialize the responses into the given type.
     /// The system prompt is used to set the context of the conversation.
     pub async fn batch_chat_with_system_prompt<T: DeserializeOwned + JsonSchema>(
         &self,
-        prompts: Vec<impl Into<String>>,
         system_prompt: impl Into<String> + Clone,
+        prompts: Vec<impl Into<String>>,
     ) -> Result<Vec<T>, BatchChatError> {
         let prompts = prompts
             .into_iter()
@@ -707,16 +775,18 @@ impl ChatClient {
         prompts: Vec<(Vec<ChatMessage>, ResponseFormat)>,
     ) -> Result<Vec<String>, BatchChatError> {
         use crate::batch::{BatchClient, BatchRequestItem};
+        use xxhash_rust::const_xxh3::xxh3_64 as const_xxh3;
 
         let batch_client = BatchClient::from(self);
 
         let (custom_ids, requests) = prompts
             .into_iter()
-            .enumerate()
-            .map(|(i, (messages, response_format))| {
-                let custom_id = format!("request-{}", i);
+            .map(|(messages, response_format)| {
+                let request_str = format!("{messages:?}, {response_format:?}, {:?}", self.model);
+                let request_hash = const_xxh3(request_str.as_bytes());
+                let custom_id = format!("request-{}", request_hash);
                 (
-                    custom_id.clone(),
+                    (custom_id.clone(), request_hash),
                     BatchRequestItem::new_chat(
                         custom_id,
                         ChatRequest {
@@ -729,18 +799,50 @@ impl ChatClient {
             })
             .unzip::<_, _, Vec<_>, Vec<_>>();
 
-        // Create the batch content
-        let content = batch_client.create_batch_content(&requests);
+        let (custom_ids, hashes) = custom_ids.into_iter().unzip::<_, _, Vec<_>, HashSet<_>>();
+        let request_hash = hashes
+            .into_iter()
+            .fold(0, |acc: u64, hash: u64| acc.wrapping_add(hash));
 
-        // Upload the content directly
-        let file_obj = batch_client
-            .files_client
-            .upload_bytes("batch_request", content, crate::files::FilePurpose::Batch)
-            .await?;
+        // list the batches to see if we already have a batch for this request
+        let all_batches = batch_client.list_batches().await?;
+        let batch = all_batches
+            .iter()
+            .find(|batch| {
+                batch
+                    .metadata
+                    .as_ref()
+                    .cloned()
+                    .unwrap_or_default()
+                    .get("request_hash")
+                    .map(|s| s == &request_hash.to_string())
+                    .unwrap_or_default()
+            })
+            .cloned();
 
-        let batch = batch_client
-            .create_batch(file_obj.id, std::collections::HashMap::new())
-            .await?;
+        // If the batch already exists, use it. Otherwise, create a new one.
+        let batch = if let Some(batch) = batch {
+            batch
+        } else {
+            // Create the batch content
+            let content = batch_client.create_batch_content(&requests);
+
+            // Upload the content directly
+            let file_obj = batch_client
+                .files_client
+                .upload_bytes("batch_request", content, crate::files::FilePurpose::Batch)
+                .await?;
+
+            batch_client
+                .create_batch(
+                    file_obj.id,
+                    std::collections::HashMap::from([(
+                        "request_hash".to_string(),
+                        request_hash.to_string(),
+                    )]),
+                )
+                .await?
+        };
 
         let batch = batch_client.wait_for_batch(&batch.id).await?;
 

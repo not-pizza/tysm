@@ -36,9 +36,16 @@ async fn main() -> anyhow::Result<()> {
     println!("Sending batch request... (this may take a while)");
     let responses = client.batch_chat::<Response>(requests).await?;
 
+    println!("---");
     for response in responses {
         println!("{} is the capital of {}", response.city, response.country);
     }
+    println!("---");
+
+    println!("Batch request completed!");
+    println!(
+        "Run this example again, and tysm will automatically reuse the batch from the previous run to save time"
+    );
 
     Ok(())
 }
