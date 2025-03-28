@@ -371,8 +371,16 @@ pub enum ChatError {
     JsonSerializeError(serde_json::Error, ChatRequest),
 
     /// The API returned a response could not be parsed into the structure expected of OpenAI responses
-    #[error("API returned a response could not be parsed into the structure expected of OpenAI responses: {0} \nresponse: {1}")]
-    ApiParseError(serde_json::Error, String),
+    #[error("API returned a response could not be parsed into the structure expected of OpenAI responses: {response} \request: {request}")]
+    ApiParseError {
+        /// The response from the API.
+        response: String,
+        /// The error that occurred when parsing the response.
+        #[source]
+        error: serde_json::Error,
+        /// The request that was sent to the API.
+        request: String,
+    },
 
     /// An error occurred when deserializing the response from the API.
     #[error("API returned an error response for request: {1}")]
@@ -429,8 +437,14 @@ pub enum BatchChatError {
     JsonDoesntMatchSchema(serde_json::Error, String),
 
     /// The API returned a response could not be parsed into the structure expected of OpenAI responses
-    #[error("API returned a response could not be parsed into the structure expected of OpenAI responses: {0} \nresponse: {1}")]
-    ApiParseError(serde_json::Error, String),
+    #[error("API returned a response could not be parsed into the structure expected of OpenAI responses: {response}")]
+    ApiParseError {
+        /// The error that occurred when parsing the response.
+        #[source]
+        error: serde_json::Error,
+        /// The response from the API.
+        response: String,
+    },
 }
 
 impl ChatClient {
@@ -577,8 +591,10 @@ impl ChatClient {
 
         let chat_response = if let Some(cached_response) = self.chat_cached(&chat_request).await {
             let chat_response: ChatResponseOrError = serde_json::from_str(&cached_response)
-                .map_err(|e| {
-                    ChatError::ApiParseError(cached_response.clone(), e, chat_request_str.clone())
+                .map_err(|e| ChatError::ApiParseError {
+                    response: cached_response.clone(),
+                    error: e,
+                    request: chat_request_str.clone(),
                 })?;
             match chat_response {
                 ChatResponseOrError::Response(response) => response,
@@ -589,8 +605,10 @@ impl ChatClient {
         } else {
             let chat_response = self.chat_uncached(&chat_request).await?;
             let chat_response: ChatResponseOrError =
-                serde_json::from_str(&chat_response).map_err(|e| {
-                    ChatError::ApiParseError(chat_request_str.clone(), e, chat_request_str.clone())
+                serde_json::from_str(&chat_response).map_err(|e| ChatError::ApiParseError {
+                    response: chat_response.clone(),
+                    error: e,
+                    request: chat_request_str.clone(),
                 })?;
             let chat_response = match chat_response {
                 ChatResponseOrError::Response(response) => response,
@@ -743,7 +761,10 @@ impl ChatClient {
                     // in this case, we assume that response is not None
                     let response = response.unwrap().body;
                     let response: ChatResponseOrError = serde_json::from_value(response.clone())
-                        .map_err(|e| BatchChatError::ApiParseError(e, response.to_string()))?;
+                        .map_err(|e| BatchChatError::ApiParseError {
+                            error: e,
+                            response: response.to_string(),
+                        })?;
 
                     Ok((custom_id, response))
                 },
