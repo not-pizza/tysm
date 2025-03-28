@@ -179,6 +179,25 @@ impl EmbeddingsClient {
 impl Vector {
     /// Calculate the cosine similarity between two vectors.
     pub fn cosine_similarity(&self, other: &Vector) -> f32 {
-        /// implement, AI!
+        let dot_product: f32 = self.elements.iter()
+            .zip(other.elements.iter())
+            .map(|(a, b)| a * b)
+            .sum();
+
+        let magnitude_a: f32 = self.elements.iter()
+            .map(|x| x * x)
+            .sum::<f32>()
+            .sqrt();
+        
+        let magnitude_b: f32 = other.elements.iter()
+            .map(|x| x * x)
+            .sum::<f32>()
+            .sqrt();
+
+        if magnitude_a == 0.0 || magnitude_b == 0.0 {
+            return 0.0;
+        }
+
+        dot_product / (magnitude_a * magnitude_b)
     }
 }
