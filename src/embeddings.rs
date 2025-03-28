@@ -55,7 +55,7 @@ pub struct EmbeddingsClient {
     /// The API key to use for the ChatGPT API.
     pub api_key: String,
     /// The URL of the ChatGPT API. Customize this if you are using a custom API that is compatible with OpenAI's.
-    pub url: String,
+    pub url: url::Url,
     /// The model to use for the ChatGPT API.
     pub model: String,
 }
@@ -96,7 +96,7 @@ impl EmbeddingsClient {
     pub fn new(api_key: impl Into<String>, model: impl Into<String>) -> Self {
         Self {
             api_key: api_key.into(),
-            url: "https://api.openai.com/v1/embeddings/".into(),
+            url: "https://api.openai.com/v1/embeddings".parse().unwrap(),
             model: model.into(),
         }
     }
@@ -135,7 +135,7 @@ impl EmbeddingsClient {
             };
 
             let response = client
-                .post(&self.url)
+                .post(self.url.clone())
                 .header("Authorization", format!("Bearer {}", self.api_key))
                 .header("Content-Type", "application/json")
                 .json(&request)
