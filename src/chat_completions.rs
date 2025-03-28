@@ -370,9 +370,9 @@ pub enum ChatError {
     #[error("JSON serialization error: {0}")]
     JsonSerializeError(serde_json::Error, ChatRequest),
 
-    /// An error occurred when deserializing the response from the API.
-    #[error("API returned an unknown response: {0} \nerror: {1} \nrequest: {2}")]
-    ApiParseError(String, serde_json::Error, String),
+    /// The API returned a response could not be parsed into the structure expected of OpenAI responses
+    #[error("API returned a response could not be parsed into the structure expected of OpenAI responses: {0} \nresponse: {1}")]
+    ApiParseError(serde_json::Error, String),
 
     /// An error occurred when deserializing the response from the API.
     #[error("API returned an error response for request: {1}")]
@@ -422,9 +422,15 @@ pub enum BatchChatError {
     #[error("The result for Custom ID `{0}` has no choices")]
     BatchNoChoices(String),
 
-    /// The API returned a response that was not a valid JSON object.
-    #[error("API returned a response that was not a valid JSON object: {0} \nresponse: {1}")]
+    /// The API returned a response that did not conform to the given schema.
+    #[error(
+        "API returned a response that did not conform to the given schema: {0} \nresponse: {1}"
+    )]
     JsonDoesntMatchSchema(serde_json::Error, String),
+
+    /// The API returned a response could not be parsed into the structure expected of OpenAI responses
+    #[error("API returned a response could not be parsed into the structure expected of OpenAI responses: {0} \nresponse: {1}")]
+    ApiParseError(serde_json::Error, String),
 }
 
 impl ChatClient {
@@ -736,7 +742,8 @@ impl ChatClient {
                     }
                     // in this case, we assume that response is not None
                     let response = response.unwrap().body;
-                    let response: ChatResponseOrError = serde_json::from_value(response).unwrap();
+                    let response: ChatResponseOrError = serde_json::from_value(response.clone())
+                        .map_err(|e| BatchChatError::ApiParseError(e, response.to_string()))?;
 
                     Ok((custom_id, response))
                 },
