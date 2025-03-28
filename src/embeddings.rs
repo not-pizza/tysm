@@ -180,22 +180,14 @@ impl Vector {
     /// Calculate the cosine similarity between two vectors.
     ///
     /// Panics if the vectors have different dimensions.
-    /// Rewrite this to use the dot product and magnitude methods, AI!
     pub fn cosine_similarity(&self, other: &Vector) -> f32 {
         if self.elements.len() != other.elements.len() {
             panic!("Cannot calculate cosine similarity between vectors of different dimensions");
         }
 
-        let dot_product: f32 = self
-            .elements
-            .iter()
-            .zip(other.elements.iter())
-            .map(|(a, b)| a * b)
-            .sum();
-
-        let magnitude_a: f32 = self.elements.iter().map(|x| x * x).sum::<f32>().sqrt();
-
-        let magnitude_b: f32 = other.elements.iter().map(|x| x * x).sum::<f32>().sqrt();
+        let dot_product = self.dot_product(other);
+        let magnitude_a = self.magnitude();
+        let magnitude_b = other.magnitude();
 
         if magnitude_a == 0.0 || magnitude_b == 0.0 {
             return 0.0;
