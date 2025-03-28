@@ -12,7 +12,7 @@ use schemars::{schema_for, transform::Transform, JsonSchema, Schema};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::batch::BatchResponseItem;
+use crate::batch::{BatchResponseItem, BatchStatus};
 use crate::schema::OpenAiTransform;
 use crate::utils::{api_key, OpenAiApiKeyError};
 use crate::OpenAiError;
@@ -822,8 +822,13 @@ impl ChatClient {
         let batch = all_batches
             .iter()
             .find(|batch| {
-                let still_active =
-                    ["completed", "in_progress", "validating"].contains(&batch.status.as_str());
+                let still_active = [
+                    BatchStatus::Completed,
+                    BatchStatus::InProgress,
+                    BatchStatus::Validating,
+                    BatchStatus::Finalizing,
+                ]
+                .contains(&batch.status);
                 if !still_active {
                     return false;
                 }

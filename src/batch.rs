@@ -123,7 +123,7 @@ pub enum WaitForBatchError {
 pub enum GetBatchResultsError {
     /// The batch is not completed.
     #[error("Batch is not completed: {0}")]
-    BatchNotCompleted(String),
+    BatchNotCompleted(BatchStatus),
 
     /// The batch has no output file.
     #[error("Batch has no output file")]
@@ -234,7 +234,7 @@ pub struct Batch {
     /// The completion window for this batch.
     pub completion_window: String,
     /// The status of the batch.
-    pub status: String,
+    pub status: BatchStatus,
     /// The ID of the output file, if available.
     pub output_file_id: Option<String>,
     /// The ID of the error file, if available.
@@ -255,6 +255,41 @@ pub struct Batch {
     pub request_counts: BatchRequestCounts,
     /// Custom metadata for the batch.
     pub metadata: Option<HashMap<String, String>>,
+}
+
+/// The status of a batch.
+#[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq, Ord, PartialOrd)]
+pub enum BatchStatus {
+    /// the input file is being validated before the batch can begin
+    #[serde(rename = "validating")]
+    Validating,
+    /// the input file has failed the validation process
+    #[serde(rename = "failed")]
+    Failed,
+    /// the input file was successfully validated and the batch is currently being run
+    #[serde(rename = "in_progress")]
+    InProgress,
+    /// the batch has completed and the results are being prepared
+    #[serde(rename = "finalizing")]
+    Finalizing,
+    /// the batch has been completed and the results are ready
+    #[serde(rename = "completed")]
+    Completed,
+    /// the batch was not able to be completed within the 24-hour time window
+    #[serde(rename = "expired")]
+    Expired,
+    /// the batch is being cancelled (may take up to 10 minutes)
+    #[serde(rename = "cancelling")]
+    Cancelling,
+    /// the batch was cancelled
+    #[serde(rename = "cancelled")]
+    Cancelled,
+}
+
+impl std::fmt::Display for BatchStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
 }
 
 /// The number of requests in a batch.
@@ -459,17 +494,21 @@ impl BatchClient {
         loop {
             let batch = self.get_batch_status(batch_id).await?;
 
-            match batch.status.as_str() {
-                "completed" => return Ok(batch),
-                "failed" => {
+            match batch.status {
+                BatchStatus::Completed => return Ok(batch),
+                BatchStatus::Failed => {
                     return Err(WaitForBatchError::BatchFailed {
                         id: batch_id.to_string(),
                         error: batch.errors.unwrap_or_default().to_string(),
                     })
                 }
-                "expired" => return Err(WaitForBatchError::BatchExpired(batch_id.to_string())),
-                "cancelled" => return Err(WaitForBatchError::BatchCancelled(batch_id.to_string())),
-                _ => {
+                BatchStatus::Expired => {
+                    return Err(WaitForBatchError::BatchExpired(batch_id.to_string()))
+                }
+                BatchStatus::Cancelled | BatchStatus::Cancelling => {
+                    return Err(WaitForBatchError::BatchCancelled(batch_id.to_string()))
+                }
+                BatchStatus::InProgress | BatchStatus::Validating | BatchStatus::Finalizing => {
                     attempts += 1;
                     // Still in progress, wait and try again
                     if seconds_waited >= 86400 {
@@ -490,10 +529,8 @@ impl BatchClient {
         &self,
         batch: &Batch,
     ) -> Result<Vec<BatchResponseItem>, GetBatchResultsError> {
-        if batch.status != "completed" {
-            return Err(GetBatchResultsError::BatchNotCompleted(
-                batch.status.clone(),
-            ));
+        if batch.status != BatchStatus::Completed {
+            return Err(GetBatchResultsError::BatchNotCompleted(batch.status));
         }
 
         let output_file_id = batch
