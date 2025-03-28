@@ -29,12 +29,19 @@ async fn main() -> anyhow::Result<()> {
         "What is the capital of Mexico?",
         "What is the capital of Canada?",
         "What is the capital of Australia?",
+        "What is the capital of the United States?",
         "What is the capital of New Zealand?",
+        "What is the capital of New Zealand?", // the response from the previous prompt will be reused
     ];
 
     // May take up to 24 hours, because it's a batch request
     println!("Sending batch request... (this may take a while)");
-    let responses = client.batch_chat::<Response>(requests).await?;
+    let responses = client
+        .batch_chat_with_system_prompt::<Response>(
+            "Respond in JSON format with the city and country.",
+            requests,
+        )
+        .await?;
 
     println!("---");
     for response in responses {

@@ -796,17 +796,21 @@ impl ChatClient {
                 let custom_id = format!("request-{}", request_hash);
                 (
                     (custom_id.clone(), request_hash),
-                    BatchRequestItem::new_chat(
-                        custom_id,
-                        ChatRequest {
-                            model: self.model.clone(),
-                            messages,
-                            response_format,
-                        },
+                    (
+                        request_hash,
+                        BatchRequestItem::new_chat(
+                            custom_id,
+                            ChatRequest {
+                                model: self.model.clone(),
+                                messages,
+                                response_format,
+                            },
+                        ),
                     ),
                 )
             })
-            .unzip::<_, _, Vec<_>, Vec<_>>();
+            .unzip::<_, _, Vec<_>, HashMap<_, _>>();
+        let requests = requests.values().cloned().collect::<Vec<_>>();
 
         let (custom_ids, hashes) = custom_ids.into_iter().unzip::<_, _, Vec<_>, HashSet<_>>();
         let request_hash = hashes
