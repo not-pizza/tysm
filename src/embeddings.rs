@@ -178,29 +178,24 @@ impl EmbeddingsClient {
 
 impl Vector {
     /// Calculate the cosine similarity between two vectors.
-    /// 
-    /// # Panics
-    /// 
+    ///
     /// Panics if the vectors have different dimensions.
+    /// Rewrite this to use the dot product and magnitude methods, AI!
     pub fn cosine_similarity(&self, other: &Vector) -> f32 {
         if self.elements.len() != other.elements.len() {
             panic!("Cannot calculate cosine similarity between vectors of different dimensions");
         }
 
-        let dot_product: f32 = self.elements.iter()
+        let dot_product: f32 = self
+            .elements
+            .iter()
             .zip(other.elements.iter())
             .map(|(a, b)| a * b)
             .sum();
 
-        let magnitude_a: f32 = self.elements.iter()
-            .map(|x| x * x)
-            .sum::<f32>()
-            .sqrt();
-        
-        let magnitude_b: f32 = other.elements.iter()
-            .map(|x| x * x)
-            .sum::<f32>()
-            .sqrt();
+        let magnitude_a: f32 = self.elements.iter().map(|x| x * x).sum::<f32>().sqrt();
+
+        let magnitude_b: f32 = other.elements.iter().map(|x| x * x).sum::<f32>().sqrt();
 
         if magnitude_a == 0.0 || magnitude_b == 0.0 {
             return 0.0;
@@ -210,16 +205,15 @@ impl Vector {
     }
 
     /// Calculate the Euclidean distance between two vectors.
-    /// 
-    /// # Panics
-    /// 
+    ///
     /// Panics if the vectors have different dimensions.
     pub fn euclidean_distance(&self, other: &Vector) -> f32 {
         if self.elements.len() != other.elements.len() {
             panic!("Cannot calculate Euclidean distance between vectors of different dimensions");
         }
-        
-        self.elements.iter()
+
+        self.elements
+            .iter()
             .zip(other.elements.iter())
             .map(|(a, b)| (a - b).powi(2))
             .sum::<f32>()
@@ -232,81 +226,73 @@ impl Vector {
         if magnitude == 0.0 {
             return self.clone();
         }
-        
+
         Vector {
-            elements: self.elements.iter()
-                .map(|x| x / magnitude)
-                .collect()
+            elements: self.elements.iter().map(|x| x / magnitude).collect(),
         }
     }
 
     /// Calculate the dot product of two vectors.
-    /// 
-    /// # Panics
-    /// 
+    ///
     /// Panics if the vectors have different dimensions.
     pub fn dot_product(&self, other: &Vector) -> f32 {
         if self.elements.len() != other.elements.len() {
             panic!("Cannot calculate dot product between vectors of different dimensions");
         }
-        
-        self.elements.iter()
+
+        self.elements
+            .iter()
             .zip(other.elements.iter())
             .map(|(a, b)| a * b)
             .sum()
     }
 
     /// Add another vector to this one.
-    /// 
-    /// # Panics
-    /// 
+    ///
     /// Panics if the vectors have different dimensions.
     pub fn add(&self, other: &Vector) -> Self {
         if self.elements.len() != other.elements.len() {
             panic!("Cannot add vectors of different dimensions");
         }
-        
+
         Vector {
-            elements: self.elements.iter()
+            elements: self
+                .elements
+                .iter()
                 .zip(other.elements.iter())
                 .map(|(a, b)| a + b)
-                .collect()
+                .collect(),
         }
     }
 
     /// Subtract another vector from this one.
-    /// 
-    /// # Panics
-    /// 
+    ///
     /// Panics if the vectors have different dimensions.
     pub fn subtract(&self, other: &Vector) -> Self {
         if self.elements.len() != other.elements.len() {
             panic!("Cannot subtract vectors of different dimensions");
         }
-        
+
         Vector {
-            elements: self.elements.iter()
+            elements: self
+                .elements
+                .iter()
                 .zip(other.elements.iter())
                 .map(|(a, b)| a - b)
-                .collect()
+                .collect(),
         }
     }
 
     /// Multiply this vector by a scalar.
     pub fn scale(&self, scalar: f32) -> Self {
         Vector {
-            elements: self.elements.iter()
-                .map(|x| x * scalar)
-                .collect()
+            elements: self.elements.iter().map(|x| x * scalar).collect(),
         }
     }
 
     /// Calculate the magnitude (length) of the vector.
     pub fn magnitude(&self) -> f32 {
-        self.elements.iter()
-            .map(|x| x * x)
-            .sum::<f32>()
-            .sqrt()
+        self.elements.iter().map(|x| x * x).sum::<f32>().sqrt()
     }
 
     /// Get the dimension (number of elements) of the vector.
