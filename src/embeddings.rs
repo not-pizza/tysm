@@ -200,4 +200,6 @@ impl Vector {
 
         dot_product / (magnitude_a * magnitude_b)
     }
+
+    /// Implement Euclidean Distance, Normalization, Dot Product, Vector Addition/Subtraction, Scalar Multiplication, Magnitude, and a Dimension method. Also, cosine_similarity should panic if the vectors are not of the same dimension, AI!
 }
