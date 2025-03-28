@@ -1,10 +1,4 @@
-use std::collections::HashMap;
-
-use serde_json::json;
-use tysm::{
-    batch::{BatchClient, BatchRequestItem},
-    chat_completions::{ChatClient, ChatMessage, ChatRequest, ResponseFormat},
-};
+use tysm::chat_completions::ChatClient;
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 struct Response {

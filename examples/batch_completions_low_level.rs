@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-use serde_json::json;
 use tysm::{
     batch::{BatchClient, BatchRequestItem},
     chat_completions::{ChatClient, ChatMessage, ChatRequest, ResponseFormat},

@@ -16,7 +16,7 @@ use std::time::Duration;
 use thiserror::Error;
 use tokio::time::sleep;
 
-use crate::chat_completions::{ChatClient, ChatError, ChatRequest};
+use crate::chat_completions::{ChatClient, ChatRequest};
 use crate::files::{FilePurpose, FilesClient, FilesError};
 use crate::utils::remove_trailing_slash;
 use crate::OpenAiError;
