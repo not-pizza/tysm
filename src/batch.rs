@@ -50,38 +50,54 @@ impl From<&ChatClient> for BatchClient {
     }
 }
 
-/// Errors that can occur when interacting with the Batch API.
+/// Errors that can occur when uploading a batch file.
 #[derive(Error, Debug)]
-pub enum BatchError {
+pub enum UploadBatchFileError {
+    /// An error occurred when uploading the file to the API.
+    #[error("Error uploading file")]
+    FileUploadError(#[from] FilesError),
+}
+
+/// Errors that can occur when creating a batch.
+#[derive(Error, Debug)]
+pub enum CreateBatchError {
     /// An error occurred when sending the request to the API.
-    #[error("Request error: {0}")]
+    #[error("Error sending request to the API")]
     RequestError(#[from] reqwest::Error),
 
     /// An error occurred when deserializing JSON.
     #[error("JSON error when parsing {1}")]
     JsonParseError(#[source] serde_json::Error, String),
 
-    /// An error occurred with file operations.
-    #[error("File error: {0}")]
-    FileError(#[from] std::io::Error),
+    /// An error occurred with the OpenAI API.
+    #[error("OpenAI API error: {0}")]
+    OpenAiError(#[from] OpenAiError),
+}
 
-    /// An error occurred with the Files API.
-    #[error("Files API error: {0}")]
-    FilesApiError(#[from] FilesError),
+/// Errors that can occur when getting the status of a batch.
+#[derive(Error, Debug)]
+pub enum GetBatchStatusError {
+    /// An error occurred when sending the request to the API.
+    #[error("Error sending request to the API")]
+    RequestError(#[from] reqwest::Error),
 
-    /// An error occurred with the Chat API.
-    #[error("Chat API error: {0}")]
-    ChatError(#[from] ChatError),
+    /// An error occurred when deserializing JSON.
+    #[error("JSON error when parsing {1}")]
+    JsonParseError(#[source] serde_json::Error, String),
 
     /// An error occurred with the OpenAI API.
     #[error("OpenAI API error: {0}")]
     OpenAiError(#[from] OpenAiError),
+}
 
-    /// The batch has expired.
-    #[error("Batch expired: {0}")]
-    BatchExpired(String),
+/// Errors that can occur when waiting for a batch to complete.
+#[derive(Error, Debug)]
+pub enum WaitForBatchError {
+    /// An error occurred when getting the batch status.
+    #[error("Error getting batch status")]
+    GetBatchStatusError(#[from] GetBatchStatusError),
 
-    /// The batch has failed.
+    /// The batch failed.
     #[error("Batch {id} failed: {error}")]
     BatchFailed {
         /// The ID of the batch.
@@ -89,7 +105,6 @@ pub enum BatchError {
         /// The error message.
         error: String,
     },
-
     /// The batch was cancelled.
     #[error("Batch cancelled: {0}")]
     BatchCancelled(String),
@@ -98,9 +113,61 @@ pub enum BatchError {
     #[error("Timeout waiting for batch to complete: {0}")]
     BatchTimeout(String),
 
-    /// Other batch error.
-    #[error("Batch error: {0}")]
-    Other(String),
+    /// The batch has expired.
+    #[error("Batch expired: {0}")]
+    BatchExpired(String),
+}
+
+/// Errors that can occur when getting the results of a batch.
+#[derive(Error, Debug)]
+pub enum GetBatchResultsError {
+    /// The batch is not completed.
+    #[error("Batch is not completed: {0}")]
+    BatchNotCompleted(String),
+
+    /// The batch has no output file.
+    #[error("Batch has no output file")]
+    BatchNoOutputFile(String),
+
+    /// An error occurred when downloading the output file.
+    #[error("File error: {0}")]
+    DownloadFileError(#[from] FilesError),
+
+    /// An error occurred when deserializing JSON.
+    #[error("JSON error when parsing {1}")]
+    JsonParseError(#[source] serde_json::Error, String),
+}
+
+/// Errors that can occur when listing batches.
+#[derive(Error, Debug)]
+pub enum CancelBatchError {
+    /// An error occured when sending the request to the API.
+    #[error("Error sending request to the API")]
+    RequestError(#[from] reqwest::Error),
+
+    /// An error occurred when deserializing JSON.
+    #[error("JSON error when parsing {1}")]
+    JsonParseError(#[source] serde_json::Error, String),
+
+    /// An error occurred with the OpenAI API.
+    #[error("OpenAI API error: {0}")]
+    OpenAiError(#[from] OpenAiError),
+}
+
+/// Errors that can occur when listing batches.
+#[derive(Error, Debug)]
+pub enum ListBatchesError {
+    /// An error occured when sending the request to the API.
+    #[error("Error sending request to the API")]
+    RequestError(#[from] reqwest::Error),
+
+    /// An error occurred when deserializing JSON.
+    #[error("JSON error when parsing {1}")]
+    JsonParseError(#[source] serde_json::Error, String),
+
+    /// An error occurred with the OpenAI API.
+    #[error("OpenAI API error: {0}")]
+    OpenAiError(#[from] OpenAiError),
 }
 
 /// A request item for a batch.
@@ -141,9 +208,11 @@ pub struct BatchItemResponse {
 }
 
 /// An error from a batch item.
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Debug, Clone, Error)]
+#[error("Batch item error: ({code}) {message}")]
 pub struct BatchItemError {
     /// The error code.
+    #[serde(default)]
     pub code: String,
     /// The error message.
     pub message: String,
@@ -305,7 +374,7 @@ impl BatchClient {
         &self,
         filename: impl AsRef<str>,
         requests: &[BatchRequestItem],
-    ) -> Result<String, BatchError> {
+    ) -> Result<String, UploadBatchFileError> {
         // Create the batch content
         let content = self.create_batch_content(requests);
 
@@ -323,7 +392,7 @@ impl BatchClient {
         &self,
         input_file_id: impl AsRef<str>,
         metadata: HashMap<String, String>,
-    ) -> Result<Batch, BatchError> {
+    ) -> Result<Batch, CreateBatchError> {
         let client = Client::new();
         let url = remove_trailing_slash(self.batches_url());
         let response = client
@@ -348,15 +417,15 @@ impl BatchClient {
                 // Try to parse as an OpenAI error
                 let error: Result<OpenAiError, _> = serde_json::from_str(&response_text);
                 match error {
-                    Ok(error) => Err(BatchError::OpenAiError(error)),
-                    Err(_) => Err(BatchError::JsonParseError(e, response_text)),
+                    Ok(error) => Err(CreateBatchError::OpenAiError(error)),
+                    Err(_) => Err(CreateBatchError::JsonParseError(e, response_text)),
                 }
             }
         }
     }
 
     /// Get the status of a batch.
-    pub async fn get_batch_status(&self, batch_id: &str) -> Result<Batch, BatchError> {
+    pub async fn get_batch_status(&self, batch_id: &str) -> Result<Batch, GetBatchStatusError> {
         let client = Client::new();
         let url = self.batches_url().join(batch_id).unwrap();
         let response = client
@@ -375,15 +444,15 @@ impl BatchClient {
                 // Try to parse as an OpenAI error
                 let error: Result<OpenAiError, _> = serde_json::from_str(&response_text);
                 match error {
-                    Ok(error) => Err(BatchError::OpenAiError(error)),
-                    Err(_) => Err(BatchError::JsonParseError(e, response_text)),
+                    Ok(error) => Err(GetBatchStatusError::OpenAiError(error)),
+                    Err(_) => Err(GetBatchStatusError::JsonParseError(e, response_text)),
                 }
             }
         }
     }
 
     /// Wait for a batch to complete.
-    pub async fn wait_for_batch(&self, batch_id: &str) -> Result<Batch, BatchError> {
+    pub async fn wait_for_batch(&self, batch_id: &str) -> Result<Batch, WaitForBatchError> {
         let mut attempts = 0;
         let mut seconds_waited = 0;
 
@@ -393,18 +462,18 @@ impl BatchClient {
             match batch.status.as_str() {
                 "completed" => return Ok(batch),
                 "failed" => {
-                    return Err(BatchError::BatchFailed {
+                    return Err(WaitForBatchError::BatchFailed {
                         id: batch_id.to_string(),
                         error: batch.errors.unwrap_or_default().to_string(),
                     })
                 }
-                "expired" => return Err(BatchError::BatchExpired(batch_id.to_string())),
-                "cancelled" => return Err(BatchError::BatchCancelled(batch_id.to_string())),
+                "expired" => return Err(WaitForBatchError::BatchExpired(batch_id.to_string())),
+                "cancelled" => return Err(WaitForBatchError::BatchCancelled(batch_id.to_string())),
                 _ => {
                     attempts += 1;
                     // Still in progress, wait and try again
                     if seconds_waited >= 86400 {
-                        return Err(BatchError::BatchTimeout(batch_id.to_string()));
+                        return Err(WaitForBatchError::BatchTimeout(batch_id.to_string()));
                     }
 
                     // Exponential backoff with a cap
@@ -420,55 +489,32 @@ impl BatchClient {
     pub async fn get_batch_results(
         &self,
         batch: &Batch,
-    ) -> Result<Vec<BatchResponseItem>, BatchError> {
+    ) -> Result<Vec<BatchResponseItem>, GetBatchResultsError> {
         if batch.status != "completed" {
-            return Err(BatchError::Other(format!(
-                "Batch is not completed: {}",
-                batch.status
-            )));
+            return Err(GetBatchResultsError::BatchNotCompleted(
+                batch.status.clone(),
+            ));
         }
 
         let output_file_id = batch
             .output_file_id
             .as_ref()
-            .ok_or_else(|| BatchError::Other("Batch has no output file".to_string()))?;
+            .ok_or_else(|| GetBatchResultsError::BatchNoOutputFile(batch.id.clone()))?;
 
         let content = self.files_client.download_file(output_file_id).await?;
 
         let mut results = Vec::new();
         for line in content.lines() {
             let result: BatchResponseItem = serde_json::from_str(line)
-                .map_err(|e| BatchError::JsonParseError(e, content.clone()))?;
+                .map_err(|e| GetBatchResultsError::JsonParseError(e, content.clone()))?;
             results.push(result);
         }
 
         Ok(results)
     }
 
-    /// Get the errors of a batch.
-    pub async fn get_batch_errors(
-        &self,
-        batch: &Batch,
-    ) -> Result<Vec<BatchResponseItem>, BatchError> {
-        let error_file_id = batch
-            .error_file_id
-            .as_ref()
-            .ok_or_else(|| BatchError::Other("Batch has no error file".to_string()))?;
-
-        let content = self.files_client.download_file(error_file_id).await?;
-
-        let mut errors = Vec::new();
-        for line in content.lines() {
-            let error: BatchResponseItem = serde_json::from_str(line)
-                .map_err(|e| BatchError::JsonParseError(e, line.to_string()))?;
-            errors.push(error);
-        }
-
-        Ok(errors)
-    }
-
     /// Cancel a batch.
-    pub async fn cancel_batch(&self, batch_id: &str) -> Result<Batch, BatchError> {
+    pub async fn cancel_batch(&self, batch_id: &str) -> Result<Batch, CancelBatchError> {
         let client = Client::new();
         let response = client
             .post(
@@ -492,8 +538,8 @@ impl BatchClient {
                 // Try to parse as an OpenAI error
                 let error: Result<OpenAiError, _> = serde_json::from_str(&response_text);
                 match error {
-                    Ok(error) => Err(BatchError::OpenAiError(error)),
-                    Err(_) => Err(BatchError::JsonParseError(e, response_text)),
+                    Ok(error) => Err(CancelBatchError::OpenAiError(error)),
+                    Err(_) => Err(CancelBatchError::JsonParseError(e, response_text)),
                 }
             }
         }
@@ -503,7 +549,7 @@ impl BatchClient {
     ///
     /// This method will automatically handle pagination by repeatedly calling
     /// `list_batches_limited` until all batches have been retrieved.
-    pub async fn list_batches(&self) -> Result<Vec<Batch>, BatchError> {
+    pub async fn list_batches(&self) -> Result<Vec<Batch>, ListBatchesError> {
         let mut all_batches = Vec::new();
         let mut last_batch_id = None;
 
@@ -537,7 +583,7 @@ impl BatchClient {
         &self,
         limit: Option<u32>,
         after: Option<&str>,
-    ) -> Result<BatchList, BatchError> {
+    ) -> Result<BatchList, ListBatchesError> {
         let mut url = self.batches_url();
 
         // Add query parameters
@@ -569,8 +615,8 @@ impl BatchClient {
                 // Try to parse as an OpenAI error
                 let error: Result<OpenAiError, _> = serde_json::from_str(&response_text);
                 match error {
-                    Ok(error) => Err(BatchError::OpenAiError(error)),
-                    Err(_) => Err(BatchError::JsonParseError(e, response_text)),
+                    Ok(error) => Err(ListBatchesError::OpenAiError(error)),
+                    Err(_) => Err(ListBatchesError::JsonParseError(e, response_text)),
                 }
             }
         }

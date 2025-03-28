@@ -3,6 +3,7 @@
 //!
 //! It also provides a batch API for processing large numbers of requests asynchronously.
 
+use std::collections::HashMap;
 use std::sync::RwLock;
 
 use lru::LruCache;
@@ -11,6 +12,7 @@ use schemars::{schema_for, transform::Transform, JsonSchema, Schema};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::batch::BatchResponseItem;
 use crate::schema::OpenAiTransform;
 use crate::utils::{api_key, OpenAiApiKeyError};
 use crate::OpenAiError;
@@ -46,7 +48,7 @@ pub struct ChatClient {
 }
 
 /// The role of a message.
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
 pub enum Role {
     /// The user is sending the message.
     #[serde(rename = "user")]
@@ -230,13 +232,13 @@ pub struct SchemaFormat {
     pub schema: Schema,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub(crate) struct ChatMessageResponse {
     pub role: Role,
     pub content: String,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 struct ChatResponse {
     #[expect(unused)]
     id: String,
@@ -252,7 +254,7 @@ struct ChatResponse {
     usage: ChatUsage,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 struct ChatChoice {
     #[expect(unused)]
     index: u8,
@@ -378,11 +380,51 @@ pub enum ChatError {
 
     /// The API returned a response that was not a valid JSON object.
     #[error("API returned a response that was not a valid JSON object: {0} \nresponse: {1}")]
-    InvalidJson(serde_json::Error, String),
+    JsonDoesntMatchSchema(serde_json::Error, String),
 
     /// The API did not return any choices.
     #[error("No choices returned from API")]
     NoChoices,
+}
+
+/// Errors that can occur when sending many chat requests via the batch API.
+#[derive(Error, Debug)]
+pub enum BatchChatError {
+    /// An error occurred when uploading the file to the API.
+    #[error("Error uploading file")]
+    FileUploadError(#[from] crate::files::FilesError),
+
+    /// An error occurred when sending the request to the API.
+    #[error("Error getting batch results")]
+    GetBatchResultsError(#[from] crate::batch::GetBatchResultsError),
+
+    /// An error occurred when creating the batch.
+    #[error("Error creating batch")]
+    CreateBatchError(#[from] crate::batch::CreateBatchError),
+
+    /// An error occurred when waiting for the batch to complete.
+    #[error("Error waiting for batch to complete")]
+    WaitForBatchError(#[from] crate::batch::WaitForBatchError),
+
+    /// Batch item error.
+    #[error("Batch item error")]
+    BatchItemError(#[from] crate::batch::BatchItemError),
+
+    /// An error occurred when sending the request to the API.
+    #[error("Chat completions error for request with custom id `{1}`")]
+    OpenAiError(#[source] OpenAiError, String),
+
+    /// A custom ID in the batch request was not found in the results.
+    #[error("Custom ID `{0}` not found in results")]
+    CustomIdNotFound(String),
+
+    /// The batch has no choices.
+    #[error("The result for Custom ID `{0}` has no choices")]
+    BatchNoChoices(String),
+
+    /// The API returned a response that was not a valid JSON object.
+    #[error("API returned a response that was not a valid JSON object: {0} \nresponse: {1}")]
+    JsonDoesntMatchSchema(serde_json::Error, String),
 }
 
 impl ChatClient {
@@ -508,7 +550,7 @@ impl ChatClient {
             .await?;
 
         let chat_response: T = serde_json::from_str(&chat_response)
-            .map_err(|e| ChatError::InvalidJson(e, chat_response.clone()))?;
+            .map_err(|e| ChatError::JsonDoesntMatchSchema(e, chat_response.clone()))?;
 
         Ok(chat_response)
     }
@@ -567,33 +609,168 @@ impl ChatClient {
         Ok(chat_response)
     }
 
-    /*/// Send many chat requests via the batch API.
+    /// Send chat messages to the batch API and deserialize the responses into the given type.
+    pub async fn batch_chat<T: DeserializeOwned + JsonSchema>(
+        &self,
+        prompts: Vec<impl Into<String>>,
+    ) -> Result<Vec<T>, BatchChatError> {
+        self.batch_chat_with_system_prompt(prompts, "").await
+    }
+
+    /// Send chat messages to the batch API and deserialize the responses into the given type.
+    /// The system prompt is used to set the context of the conversation.
+    pub async fn batch_chat_with_system_prompt<T: DeserializeOwned + JsonSchema>(
+        &self,
+        prompts: Vec<impl Into<String>>,
+        system_prompt: impl Into<String> + Clone,
+    ) -> Result<Vec<T>, BatchChatError> {
+        let prompts = prompts
+            .into_iter()
+            .map(|prompt| {
+                let prompt = prompt.into();
+                let system_prompt = system_prompt.clone().into();
+
+                vec![
+                    ChatMessage {
+                        role: Role::System,
+                        content: vec![ChatMessageContent::Text {
+                            text: system_prompt,
+                        }],
+                    },
+                    ChatMessage {
+                        role: Role::User,
+                        content: vec![ChatMessageContent::Text { text: prompt }],
+                    },
+                ]
+            })
+            .collect();
+
+        self.batch_chat_with_messages(prompts).await
+    }
+
+    /// Send many chat requests via the batch API and deserialize the responses into the given type.
+    pub async fn batch_chat_with_messages<T: DeserializeOwned + JsonSchema>(
+        &self,
+        messages: Vec<Vec<ChatMessage>>,
+    ) -> Result<Vec<T>, BatchChatError> {
+        let json_schema = JsonSchemaFormat::new::<T>();
+
+        let response_format = ResponseFormat::JsonSchema { json_schema };
+
+        let chat_responses = self
+            .batch_chat_with_messages_raw(
+                messages
+                    .into_iter()
+                    .map(|m| (m, response_format.clone()))
+                    .collect(),
+            )
+            .await?;
+
+        let chat_responses: Vec<T> = chat_responses
+            .into_iter()
+            .map(|chat_response| {
+                serde_json::from_str(&chat_response)
+                    .map_err(|e| BatchChatError::JsonDoesntMatchSchema(e, chat_response.clone()))
+            })
+            .collect::<Result<Vec<_>, BatchChatError>>()?;
+
+        Ok(chat_responses)
+    }
+
+    /// Send many chat requests via the batch API.
     pub async fn batch_chat_with_messages_raw(
         &self,
         prompts: Vec<(Vec<ChatMessage>, ResponseFormat)>,
-    ) -> Result<String, ChatError> {
+    ) -> Result<Vec<String>, BatchChatError> {
         use crate::batch::{BatchClient, BatchRequestItem};
 
         let batch_client = BatchClient::from(self);
 
-        let requests = prompts
+        let (custom_ids, requests) = prompts
             .into_iter()
-            .map(|(messages, response_format)| {
-                BatchRequestItem::new_chat("request-1", self.model.clone(), messages)
+            .enumerate()
+            .map(|(i, (messages, response_format))| {
+                let custom_id = format!("request-{}", i);
+                (
+                    custom_id.clone(),
+                    BatchRequestItem::new_chat(
+                        custom_id,
+                        ChatRequest {
+                            model: self.model.clone(),
+                            messages,
+                            response_format,
+                        },
+                    ),
+                )
             })
-            .collect();
+            .unzip::<_, _, Vec<_>, Vec<_>>();
 
         // Create the batch content
-        let content = batch_client.create_batch_content(requests);
+        let content = batch_client.create_batch_content(&requests);
 
         // Upload the content directly
         let file_obj = batch_client
             .files_client
-            .upload_bytes(filename.as_ref(), content, FilePurpose::Batch)
+            .upload_bytes("batch_request", content, crate::files::FilePurpose::Batch)
             .await?;
 
-        todo!()
-    }*/
+        let batch = batch_client
+            .create_batch(file_obj.id, std::collections::HashMap::new())
+            .await?;
+
+        let batch = batch_client.wait_for_batch(&batch.id).await?;
+
+        let results = batch_client.get_batch_results(&batch).await?;
+
+        let results = results
+            .into_iter()
+            .map(
+                |BatchResponseItem {
+                     id,
+                     custom_id,
+                     response,
+                     error,
+                 }| {
+                    if let Some(error) = error {
+                        return Err(BatchChatError::BatchItemError(error));
+                    }
+                    // in this case, we assume that response is not None
+                    let response = response.unwrap().body;
+                    let response: ChatResponseOrError = serde_json::from_value(response).unwrap();
+
+                    Ok((custom_id, response))
+                },
+            )
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let results = results
+            .into_iter()
+            .map(|(custom_id, response)| match response {
+                ChatResponseOrError::Response(response) => Ok((custom_id, response)),
+                ChatResponseOrError::Error(error) => {
+                    return Err(BatchChatError::OpenAiError(error, custom_id));
+                }
+            })
+            .collect::<Result<HashMap<_, _>, BatchChatError>>()?;
+
+        let results = custom_ids
+            .into_iter()
+            .map(|custom_id| {
+                results
+                    .get(&custom_id)
+                    .ok_or(BatchChatError::CustomIdNotFound(custom_id.clone()))
+                    .and_then(|response| {
+                        response
+                            .choices
+                            .first()
+                            .ok_or(BatchChatError::BatchNoChoices(custom_id))
+                    })
+                    .map(|choice| choice.message.content.to_string())
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(results)
+    }
 
     async fn chat_cached(&self, chat_request: &ChatRequest) -> Option<String> {
         let chat_request = serde_json::to_string(chat_request).ok()?;

@@ -125,9 +125,9 @@ pub enum FilesError {
     #[error("API returned an error response")]
     ApiError(#[from] OpenAiError),
 
-    /// An error occurred when reading the file.
+    /// An error occurred when reading an on-disk file.
     #[error("File error: {0}")]
-    FileError(#[from] std::io::Error),
+    IoError(#[from] std::io::Error),
 
     /// The file path is invalid.
     #[error("Invalid file path")]
