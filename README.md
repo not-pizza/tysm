@@ -12,9 +12,10 @@ Including...
   - Automatic local caching of API responses
   - Batch API support
 - **Embeddings API**
-  - Single and batch requests supported
+  - Single and batch requests supported (but not through batch API)
+  - Vector similarity functions provided
 - **Files API**
-  - Create, List, and Delete files
+  - Create, list, download and delete files
 
 The **Typed Chat Completions** feature is the most interesting part, so most of this readme will focus on that.
 
