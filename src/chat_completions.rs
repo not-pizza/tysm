@@ -985,7 +985,15 @@ impl ChatClient {
         // Then, check the cache directory
         let cache_directory = self.cache_directory.as_ref()?;
         let cache_path = cache_directory.join(chat_request_cache_key);
-        let response = tokio::fs::read_to_string(&cache_path).await.ok()?;
+        
+        // Read the compressed data from disk
+        let compressed_data = tokio::fs::read(&cache_path).await.ok()?;
+        
+        // Decompress the data
+        let decompressed_data = zstd::decode_all(compressed_data.as_slice()).ok()?;
+        
+        // Convert bytes back to string
+        let response = String::from_utf8(decompressed_data).ok()?;
         Some(response)
     }
 
@@ -1019,10 +1027,11 @@ impl ChatClient {
                     tokio::fs::create_dir_all(&cache_directory).await?;
                 }
 
-                // compress with zstd, and also fix the place where we read in chat_cached to decompress, AI!
-
                 let cache_path = cache_directory.join(chat_request_cache_key);
-                tokio::fs::write(&cache_path, &response).await?;
+                
+                // Compress the response with zstd before writing to disk
+                let compressed = zstd::encode_all(response.as_bytes(), 3)?;
+                tokio::fs::write(&cache_path, compressed).await?;
             }
         }
 
