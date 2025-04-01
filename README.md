@@ -26,7 +26,7 @@ The **Typed Chat Completions** feature is the most interesting part, so most of 
   - [Usage](#usage)
   - [Setup](#setup)
     - [Automatic Caching](#automatic-caching)
-    - [Custom API endpoints](#custom-api-endpoints)
+    - [Custom API URL](#custom-api-url)
   - [Feature flags](#feature-flags)
   - [License](#license)
   - [Backstory](#backstory)
@@ -115,16 +115,13 @@ fn see() {
 }
 ```
 
-### Custom API endpoints
+### Custom API URL
 
-Sometimes people want to use a different completions API. For example, I maintain a wrapper around OpenAI's API that adds a global cache. To switch endpoints, just do this:
+Sometimes people want to use a different completions API. For example, I maintain a wrapper around OpenAI's API that adds a global cache. To switch the URL, just do this:
 
 ```rust
-let my_api = "https://g7edusstdonmn3vxdh3qdypkrq0wzttx.lambda-url.us-east-1.on.aws/v1/chat/completions".to_string();
-let client = ChatClient {
-    url: my_api,
-    ..ChatClient::from_env("gpt-4o").unwrap()
-};
+let my_api = "https://g7edusstdonmn3vxdh3qdypkrq0wzttx.lambda-url.us-east-1.on.aws/v1/";
+let client = Client::from_env("gpt-4o").with_url(my_api);
 ```
 
 By the way, feel free to use this endpoint if you want, but I don't promise to maintain it forever.

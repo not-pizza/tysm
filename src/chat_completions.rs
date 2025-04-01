@@ -4,6 +4,7 @@
 //! It also provides a batch API for processing large numbers of requests asynchronously.
 
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::RwLock;
 
 use lru::LruCache;
@@ -11,6 +12,7 @@ use reqwest::Client;
 use schemars::{schema_for, transform::Transform, JsonSchema, Schema};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use thiserror::Error;
+use xxhash_rust::const_xxh3::xxh3_64 as const_xxh3;
 
 use crate::batch::{BatchResponseItem, BatchStatus};
 use crate::schema::OpenAiTransform;
@@ -45,6 +47,8 @@ pub struct ChatClient {
     pub lru: RwLock<LruCache<String, String>>,
     /// This client's token consumption (as reported by the API).
     pub usage: RwLock<ChatUsage>,
+    /// The directory in which to cache responses to requests
+    pub cache_directory: Option<PathBuf>,
 }
 
 /// The role of a message.
@@ -156,6 +160,13 @@ pub struct ChatRequest {
     pub messages: Vec<ChatMessage>,
     /// The response format to use for the ChatGPT API.
     pub response_format: ResponseFormat,
+}
+
+impl ChatRequest {
+    fn cache_key(&self) -> String {
+        let id = const_xxh3(&serde_json::to_string(&self).unwrap().as_bytes());
+        format!("tysm-v1-chat_request-{}", id)
+    }
 }
 
 /// An object specifying the format that the model must output.
@@ -390,6 +401,10 @@ pub enum ChatError {
     #[error("API returned a response that was not a valid JSON object: {0} \nresponse: {1}")]
     JsonDoesntMatchSchema(serde_json::Error, String),
 
+    /// IO error (usually occurs when reading from the cache).
+    #[error("IO error")]
+    IoError(#[from] std::io::Error),
+
     /// The API did not return any choices.
     #[error("No choices returned from API")]
     NoChoices,
@@ -470,7 +485,38 @@ impl ChatClient {
             model: model.into(),
             lru: RwLock::new(LruCache::new(NonZeroUsize::new(1024).unwrap())),
             usage: RwLock::new(ChatUsage::default()),
+            cache_directory: None,
         }
+    }
+
+    /// Set the cache directory for the client.
+    ///
+    /// The cache directory will be used to persistently cache all responses to requests.
+    pub fn with_cache_directory(mut self, cache_directory: impl Into<PathBuf>) -> Self {
+        let cache_directory = cache_directory.into();
+
+        if cache_directory.exists() {
+            if cache_directory.is_file() {
+                panic!("Cache directory is a file");
+            }
+        }
+
+        self.cache_directory = Some(cache_directory);
+        self
+    }
+
+    /// Sets the base URL
+    ///
+    /// ```
+    /// let client = client.with_url("https://api.anthropic.com/v1/").unwrap();
+    /// ```
+    ///
+    /// Panics if the argument is not a valid URL.
+    pub fn with_url(mut self, url: impl Into<String>) -> Self {
+        let url = url.into();
+        let url = url::Url::parse(&url).unwrap();
+        self.base_url = url;
+        self
     }
 
     fn chat_completions_url(&self) -> url::Url {
@@ -784,7 +830,6 @@ impl ChatClient {
         prompts: Vec<(Vec<ChatMessage>, ResponseFormat)>,
     ) -> Result<Vec<String>, BatchChatError> {
         use crate::batch::{BatchClient, BatchRequestItem};
-        use xxhash_rust::const_xxh3::xxh3_64 as const_xxh3;
 
         let batch_client = BatchClient::from(self);
 
@@ -927,11 +972,21 @@ impl ChatClient {
     }
 
     async fn chat_cached(&self, chat_request: &ChatRequest) -> Option<String> {
+        let chat_request_cache_key = chat_request.cache_key();
         let chat_request = serde_json::to_string(chat_request).ok()?;
 
-        let mut lru = self.lru.write().ok()?;
+        // First, check the lru (which we just peek so it's not even really used as a LRU)
+        let lru = self.lru.read().ok()?;
+        let response = lru.peek(&chat_request);
+        if let Some(response) = response {
+            return Some(response.clone());
+        }
 
-        lru.get(&chat_request).cloned()
+        // Then, check the cache directory
+        let cache_directory = self.cache_directory.as_ref()?;
+        let cache_path = cache_directory.join(chat_request_cache_key);
+        let response = tokio::fs::read_to_string(&cache_path).await.ok()?;
+        Some(response)
     }
 
     async fn chat_uncached(&self, chat_request: &ChatRequest) -> Result<String, ChatError> {
@@ -947,14 +1002,27 @@ impl ChatClient {
             .text()
             .await?;
 
-        let chat_request = serde_json::to_string(chat_request)
-            .map_err(|e| ChatError::JsonSerializeError(e, chat_request.clone()))?;
+        // simple heuristic to avoid caching errors
+        if !response.starts_with("{\"error\":") {
+            let chat_request_cache_key = chat_request.cache_key();
+            let chat_request = serde_json::to_string(chat_request)
+                .map_err(|e| ChatError::JsonSerializeError(e, chat_request.clone()))?;
 
-        self.lru
-            .write()
-            .ok()
-            .unwrap()
-            .put(chat_request, response.clone());
+            self.lru
+                .write()
+                .ok()
+                .unwrap()
+                .put(chat_request, response.clone());
+
+            if let Some(cache_directory) = &self.cache_directory {
+                if !cache_directory.exists() {
+                    tokio::fs::create_dir_all(&cache_directory).await?;
+                }
+
+                let cache_path = cache_directory.join(chat_request_cache_key);
+                tokio::fs::write(&cache_path, &response).await?;
+            }
+        }
 
         Ok(response)
     }
