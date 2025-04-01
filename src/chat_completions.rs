@@ -372,6 +372,7 @@ impl std::ops::Add for CompletionTokenDetails {
 
 /// Errors that can occur when interacting with the ChatGPT API.
 #[derive(Error, Debug)]
+#[non_exhaustive]
 pub enum ChatError {
     /// An error occurred when sending the request to the API.
     #[error("Request error: {0}")]
@@ -412,6 +413,7 @@ pub enum ChatError {
 
 /// Errors that can occur when sending many chat requests via the batch API.
 #[derive(Error, Debug)]
+#[non_exhaustive]
 pub enum BatchChatError {
     /// An error occurred when uploading the file to the API.
     #[error("Error uploading file")]
