@@ -508,7 +508,7 @@ impl ChatClient {
     /// Sets the base URL
     ///
     /// ```
-    /// let client = client.with_url("https://api.anthropic.com/v1/").unwrap();
+    /// let client = Client::from_env("claude-3-7-sonnet-20250219").with_url("https://api.anthropic.com/v1/").unwrap();
     /// ```
     ///
     /// Panics if the argument is not a valid URL.
