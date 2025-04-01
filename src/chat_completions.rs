@@ -18,6 +18,7 @@ use crate::batch::{BatchResponseItem, BatchStatus};
 use crate::schema::OpenAiTransform;
 use crate::utils::{api_key, OpenAiApiKeyError};
 use crate::OpenAiError;
+use log::{debug, info, warn};
 
 /// To use this library, you need to create a [`ChatClient`]. This contains various information needed to interact with the ChatGPT API,
 /// such as the API key, the model to use, and the URL of the API.
@@ -383,7 +384,7 @@ pub enum ChatError {
     JsonSerializeError(serde_json::Error, ChatRequest),
 
     /// The API returned a response could not be parsed into the structure expected of OpenAI responses
-    #[error("API returned a response could not be parsed into the structure expected of OpenAI responses: {response} \request: {request}")]
+    #[error("API returned a response could not be parsed into the structure expected of OpenAI responses: `{response}` (request: `{request}`)")]
     ApiParseError {
         /// The response from the API.
         response: String,
@@ -395,11 +396,11 @@ pub enum ChatError {
     },
 
     /// An error occurred when deserializing the response from the API.
-    #[error("API returned an error response for request: {1}")]
+    #[error("API returned an error response for request {1}")]
     ApiError(#[source] OpenAiError, String),
 
     /// The API returned a response that was not a valid JSON object.
-    #[error("API returned a response that was not a valid JSON object: {0} \nresponse: {1}")]
+    #[error("API returned a response that was not a valid JSON object: {0} (response: `{1}`)")]
     JsonDoesntMatchSchema(serde_json::Error, String),
 
     /// IO error (usually occurs when reading from the cache).
@@ -721,14 +722,34 @@ impl ChatClient {
 
         let chat_response = if let Some(cached_response) = self.chat_cached(&chat_request).await {
             let chat_response: ChatResponseOrError = serde_json::from_str(&cached_response)
-                .map_err(|e| ChatError::ApiParseError {
-                    response: cached_response.clone(),
-                    error: e,
-                    request: chat_request_str.clone(),
+                .map_err(|e| {
+                    let chat_request_str = if chat_request_str.len() > 100 {
+                        chat_request_str
+                            .chars()
+                            .take(100)
+                            .chain("...".chars())
+                            .collect()
+                    } else {
+                        chat_request_str.clone()
+                    };
+                    ChatError::ApiParseError {
+                        response: cached_response.clone(),
+                        error: e,
+                        request: chat_request_str,
+                    }
                 })?;
             match chat_response {
                 ChatResponseOrError::Response(response) => response,
                 ChatResponseOrError::Error(error) => {
+                    let chat_request_str = if chat_request_str.len() > 100 {
+                        chat_request_str
+                            .chars()
+                            .take(100)
+                            .chain("...".chars())
+                            .collect()
+                    } else {
+                        chat_request_str.clone()
+                    };
                     return Err(ChatError::ApiError(error, chat_request_str));
                 }
             }
@@ -847,6 +868,8 @@ impl ChatClient {
     ) -> Result<Vec<String>, BatchChatError> {
         use crate::batch::{BatchClient, BatchRequestItem};
 
+        info!("Starting batch chat with {} prompts", prompts.len());
+
         let batch_client = BatchClient::from(self);
 
         let (custom_ids, requests) = prompts
@@ -907,8 +930,10 @@ impl ChatClient {
 
         // If the batch already exists, use it. Otherwise, create a new one.
         let batch = if let Some(batch) = batch {
+            info!("Reusing existing batch");
             batch
         } else {
+            info!("No batch with matching hash found found, creating a new one");
             // Create the batch content
             let content = batch_client.create_batch_content(&requests);
 
@@ -1012,6 +1037,7 @@ impl ChatClient {
 
         // Convert bytes back to string
         let response = String::from_utf8(decompressed_data).ok()?;
+
         Some(response)
     }
 
@@ -1029,7 +1055,7 @@ impl ChatClient {
             .await?;
 
         // simple heuristic to avoid caching errors
-        if !response.starts_with("{\"error\":") {
+        if !response.starts_with("{\"error\":") && !response.starts_with("error code") {
             let chat_request_cache_key = chat_request.cache_key();
             let chat_request = serde_json::to_string(chat_request)
                 .map_err(|e| ChatError::JsonSerializeError(e, chat_request.clone()))?;

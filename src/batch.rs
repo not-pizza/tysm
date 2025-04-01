@@ -6,6 +6,7 @@
 //! See the examples/ for more information.
 //! ```
 
+use log::info;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -419,6 +420,12 @@ impl BatchClient {
             .upload_bytes(filename.as_ref(), content, FilePurpose::Batch)
             .await?;
 
+        info!(
+            "Batch file {} uploaded with ID {}",
+            filename.as_ref(),
+            file_obj.id
+        );
+
         Ok(file_obj.id)
     }
 
@@ -447,7 +454,14 @@ impl BatchClient {
         let batch: Result<Batch, serde_json::Error> = serde_json::from_str(&response_text);
 
         match batch {
-            Ok(batch) => Ok(batch),
+            Ok(batch) => {
+                info!(
+                    "Batch {} created with file id {}",
+                    batch.id,
+                    input_file_id.as_ref()
+                );
+                Ok(batch)
+            }
             Err(e) => {
                 // Try to parse as an OpenAI error
                 let error: Result<OpenAiError, _> = serde_json::from_str(&response_text);
@@ -517,6 +531,10 @@ impl BatchClient {
 
                     // Exponential backoff with a cap
                     let delay = std::cmp::min(120, 2_u64.pow(attempts)) as u64;
+                    info!(
+                        "batch {} is still in progress, waiting {} seconds",
+                        batch_id, delay
+                    );
                     sleep(Duration::from_secs(delay)).await;
                     seconds_waited += delay;
                 }

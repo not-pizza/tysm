@@ -68,7 +68,7 @@ pub enum EmbeddingsError {
     RequestError(#[from] reqwest::Error),
 
     /// An error occurred when deserializing the response from the API.
-    #[error("API returned an unknown response: {0} \nerror: {1} \nrequest: {2}")]
+    #[error("API returned an unknown response: {0} | error: {1} | request: {2}")]
     ApiParseError(String, serde_json::Error, String),
 
     /// An error occurred when deserializing the response from the API.
@@ -76,7 +76,7 @@ pub enum EmbeddingsError {
     ApiError(#[source] OpenAiError, String),
 
     /// The API returned a response that was not the expected JSON object.
-    #[error("API returned a response that was not the expected JSON object: {0} \nresponse: {1}")]
+    #[error("API returned a response that was not the expected JSON object: {0} | response: {1}")]
     InvalidJson(serde_json::Error, String),
 
     /// The API did not return any choices.
@@ -156,10 +156,13 @@ impl EmbeddingsClient {
             let embeddings_response = match embeddings_response {
                 EmbeddingsResponseOrError::Response(response) => response,
                 EmbeddingsResponseOrError::Error(error) => {
-                    return Err(EmbeddingsError::ApiError(
-                        error,
-                        serde_json::to_string(&request).unwrap(),
-                    ));
+                    let request_str = serde_json::to_string(&request).unwrap();
+                    let request_str = if request_str.len() > 100 {
+                        request_str.chars().take(100).chain("...".chars()).collect()
+                    } else {
+                        request_str
+                    };
+                    return Err(EmbeddingsError::ApiError(error, request_str));
                 }
             };
 

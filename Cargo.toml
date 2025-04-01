@@ -32,6 +32,7 @@ tokio-util = { version = "0.7.10", features = ["codec"] }
 url = "2.5.4"
 xxhash-rust = { version = "0.8.15", features = ["xxh3", "const_xxh3"] }
 zstd = "0.13.3"
+log = "0.4.27"
 
 [dev-dependencies]
 tokio = { version = "1.21.2", features = ["macros", "rt-multi-thread", "full"] }
