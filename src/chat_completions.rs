@@ -508,12 +508,28 @@ impl ChatClient {
     /// Sets the base URL
     ///
     /// ```
-    /// let client = Client::from_env("claude-3-7-sonnet-20250219").with_url("https://api.anthropic.com/v1/").unwrap();
+    /// # use tysm::chat_completions::ChatClient;
+    /// let api_key = "YOUR ANTHROPIC API KEY HERE";
+    /// let client = ChatClient::new(api_key, "claude-3-7-sonnet-20250219").with_url("https://api.anthropic.com/v1/");
+    /// ```
+    ///
+    /// or...
+    ///
+    /// ```
+    /// # use tysm::chat_completions::ChatClient;
+    /// let api_key = "YOUR GEMINI API KEY HERE";
+    /// let client = ChatClient::new(api_key, "gemini-2.0-flash").with_url("https://generativelanguage.googleapis.com/v1beta/openai/");
     /// ```
     ///
     /// Panics if the argument is not a valid URL.
     pub fn with_url(mut self, url: impl Into<String>) -> Self {
         let url = url.into();
+        let url = if url.ends_with('/') {
+            url
+        } else {
+            format!("{}/", url)
+        };
+
         let url = url::Url::parse(&url).unwrap();
         self.base_url = url;
         self

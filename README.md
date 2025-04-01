@@ -27,6 +27,8 @@ The **Typed Chat Completions** feature is the most interesting part, so most of 
   - [Setup](#setup)
     - [Automatic Caching](#automatic-caching)
     - [Custom API URL](#custom-api-url)
+    - ["I want to use Anthropic!"](#i-want-to-use-anthropic)
+    - ["I want to use Gemini!"](#i-want-to-use-gemini)
   - [Feature flags](#feature-flags)
   - [License](#license)
   - [Backstory](#backstory)
@@ -125,6 +127,37 @@ let client = Client::from_env("gpt-4o").with_url(my_api);
 ```
 
 By the way, feel free to use this endpoint if you want, but I don't promise to maintain it forever.
+
+### "I want to use Anthropic!"
+
+Anthropic has some limited [OpenAI compatibility](https://docs.anthropic.com/en/api/openai-sdk). But at the time of this writing, they ignore the `response_format` parameter. This means the structured outputs stuff is not going to work. However, you can still use the `ChatClient::chat_with_messages_raw` function just fine:
+
+```rust
+use tysm::chat_completions::{ChatClient, ChatMessage, ResponseFormat};
+let api_key = std::env::var("ANTHROPIC_API_KEY").unwrap();
+let client = ChatClient::new(api_key, "claude-3-7-sonnet-20250219").with_url("https://api.anthropic.com/v1/");
+let response = client
+  .chat_with_messages_raw(
+      vec![
+          ChatMessage::system("System prompt goes here"),
+          ChatMessage::user("User message goes here"),
+      ],
+      ResponseFormat::Text, // ignored
+  )
+  .await?;
+```
+
+The Batch API will also not work against Anthropic's API.
+
+### "I want to use Gemini!"
+
+Gemini luckily does support structured outputs. So you can just use your Gemini API key and set the URL to use the OpenAI compatibility layer.
+
+```rust
+use tysm::chat_completions::ChatClient;
+let api_key = std::env::var("GEMINI_API_KEY").unwrap();
+let client = ChatClient::new(api_key, "gemini-2.0-flash").with_url("https://generativelanguage.googleapis.com/v1beta/openai/");
+```
 
 ## Feature flags
 
