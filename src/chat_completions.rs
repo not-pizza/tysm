@@ -45,7 +45,7 @@ pub struct ChatClient {
     pub model: String,
     /// A cache of the few responses. Stores the last 1024 responses by default.
     pub lru: RwLock<LruCache<String, String>>,
-    /// This client's token consumption (as reported by the API).
+    /// This client's token consumption (as reported by the API). Batch requests will not affect `usage`.
     pub usage: RwLock<ChatUsage>,
     /// The directory in which to cache responses to requests
     pub cache_directory: Option<PathBuf>,
@@ -164,7 +164,7 @@ pub struct ChatRequest {
 
 impl ChatRequest {
     fn cache_key(&self) -> String {
-        let id = const_xxh3(&serde_json::to_string(&self).unwrap().as_bytes());
+        let id = const_xxh3(serde_json::to_string(&self).unwrap().as_bytes());
         format!("tysm-v1-chat_request-{}.zstd", id)
     }
 }
@@ -495,10 +495,8 @@ impl ChatClient {
     pub fn with_cache_directory(mut self, cache_directory: impl Into<PathBuf>) -> Self {
         let cache_directory = cache_directory.into();
 
-        if cache_directory.exists() {
-            if cache_directory.is_file() {
-                panic!("Cache directory is a file");
-            }
+        if cache_directory.exists() && cache_directory.is_file() {
+            panic!("Cache directory is a file");
         }
 
         self.cache_directory = Some(cache_directory);
@@ -976,10 +974,12 @@ impl ChatClient {
         let chat_request = serde_json::to_string(chat_request).ok()?;
 
         // First, check the lru (which we just peek so it's not even really used as a LRU)
-        let lru = self.lru.read().ok()?;
-        let response = lru.peek(&chat_request);
-        if let Some(response) = response {
-            return Some(response.clone());
+        {
+            let lru = self.lru.read().ok()?;
+            let response = lru.peek(&chat_request);
+            if let Some(response) = response {
+                return Some(response.clone());
+            }
         }
 
         // Then, check the cache directory
@@ -1043,6 +1043,17 @@ impl ChatClient {
     /// Does not double-count tokens used in cached responses.
     pub fn usage(&self) -> ChatUsage {
         *self.usage.read().unwrap()
+    }
+
+    /// Attempts to compute the cost in dollars of the usage of this client.
+    ///
+    /// This is provided on a best-effort basis. The prices are hardcoded into
+    /// the library (as OpenAI doesn't provide an API to get API pricing info),
+    /// and may be out of date or unavailable for the model you're using.
+    /// If you notice the prices being out of date, [please leave an issue](https://github.com/not-pizza/tysm)!
+    pub fn cost(&self) -> Option<f64> {
+        let usage = self.usage();
+        crate::model_prices::cost(&self.model, usage)
     }
 }
 
