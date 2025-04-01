@@ -1019,6 +1019,8 @@ impl ChatClient {
                     tokio::fs::create_dir_all(&cache_directory).await?;
                 }
 
+                // compress with zstd, and also fix the place where we read in chat_cached to decompress, AI!
+
                 let cache_path = cache_directory.join(chat_request_cache_key);
                 tokio::fs::write(&cache_path, &response).await?;
             }
