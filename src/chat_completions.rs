@@ -71,6 +71,7 @@ pub enum Role {
 pub struct ChatMessage {
     /// The role of user sending the message.
     pub role: Role,
+
     /// The content of the message. It is a vector of [`ChatMessageContent`]s,
     /// which allows you to include images in the message.
     pub content: Vec<ChatMessageContent>,
@@ -248,6 +249,22 @@ pub struct SchemaFormat {
 pub(crate) struct ChatMessageResponse {
     pub role: Role,
     pub content: String,
+
+    /// When using Structured Outputs with user-generated input, OpenAI models may occasionally refuse to fulfill the request for safety reasons. Since a refusal does not necessarily follow the schema supplied in response_format, the API response will include a new field called refusal to indicate that the model refused to fulfill the request.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub refusal: Option<String>,
+}
+
+impl ChatMessageResponse {
+    fn content(self) -> Result<String, String> {
+        if let Some(refusal) = self.refusal {
+            if !refusal.trim().is_empty() {
+                return Err(refusal);
+            }
+        }
+
+        Ok(self.content)
+    }
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -400,8 +417,8 @@ pub enum ChatError {
     ApiError(#[source] OpenAiError, String),
 
     /// The API returned a response that was not a valid JSON object.
-    #[error("API returned a response that was not a valid JSON object: {0} (response: `{1}`)")]
-    JsonDoesntMatchSchema(serde_json::Error, String),
+    #[error("There was a problem with the API response")]
+    JsonDoesntMatchSchema(#[from] IndividualChatError),
 
     /// IO error (usually occurs when reading from the cache).
     #[error("IO error")]
@@ -472,6 +489,10 @@ pub enum IndividualChatError {
         "API returned a response that did not conform to the given schema: `{0}` (response: `{1}`)"
     )]
     JsonDoesntMatchSchema(serde_json::Error, String),
+
+    /// The API refused to fulfill the request.
+    #[error("The API refused to fulfill the request: `{0}`")]
+    Refusal(String),
 }
 
 impl ChatClient {
@@ -637,16 +658,8 @@ impl ChatClient {
         let system_prompt = system_prompt.into();
 
         let messages = vec![
-            ChatMessage {
-                role: Role::System,
-                content: vec![ChatMessageContent::Text {
-                    text: system_prompt,
-                }],
-            },
-            ChatMessage {
-                role: Role::User,
-                content: vec![ChatMessageContent::Text { text: prompt }],
-            },
+            ChatMessage::system(system_prompt),
+            ChatMessage::user(prompt),
         ];
         self.chat_with_messages::<T>(messages).await
     }
@@ -705,8 +718,9 @@ impl ChatClient {
             .chat_with_messages_raw(messages, response_format)
             .await?;
 
-        let chat_response: T = Self::decode_json(&chat_response)
-            .map_err(|e| ChatError::JsonDoesntMatchSchema(e, chat_response.trim().to_string()))?;
+        let chat_response: T = Self::decode_json(&chat_response).map_err(|e| {
+            IndividualChatError::JsonDoesntMatchSchema(e, chat_response.trim().to_string())
+        })?;
 
         Ok(chat_response)
     }
@@ -780,13 +794,14 @@ impl ChatClient {
             }
             chat_response
         };
-        let chat_response = chat_response
+        let message = chat_response
             .choices
             .first()
             .ok_or(ChatError::NoChoices)?
             .message
-            .content
             .clone();
+
+        let chat_response = message.content().map_err(IndividualChatError::Refusal)?;
 
         Ok(chat_response)
     }
@@ -817,16 +832,8 @@ impl ChatClient {
                 let system_prompt = system_prompt.clone().into();
 
                 vec![
-                    ChatMessage {
-                        role: Role::System,
-                        content: vec![ChatMessageContent::Text {
-                            text: system_prompt,
-                        }],
-                    },
-                    ChatMessage {
-                        role: Role::User,
-                        content: vec![ChatMessageContent::Text { text: prompt }],
-                    },
+                    ChatMessage::system(system_prompt),
+                    ChatMessage::user(prompt),
                 ]
             })
             .collect();
@@ -858,6 +865,7 @@ impl ChatClient {
         let chat_responses: Vec<Result<T, _>> = chat_responses
             .into_iter()
             .map(|chat_response| {
+                let chat_response = chat_response?;
                 Self::decode_json(&chat_response).map_err(|e| {
                     IndividualChatError::JsonDoesntMatchSchema(e, chat_response.trim().to_string())
                 })
@@ -873,7 +881,7 @@ impl ChatClient {
     pub async fn batch_chat_with_messages_raw(
         &self,
         prompts: Vec<(Vec<ChatMessage>, ResponseFormat)>,
-    ) -> Result<Vec<String>, BatchChatError> {
+    ) -> Result<Vec<Result<String, IndividualChatError>>, BatchChatError> {
         use crate::batch::{BatchClient, BatchRequestItem};
 
         info!("Starting batch chat with {} prompts", prompts.len());
@@ -1013,7 +1021,13 @@ impl ChatClient {
                             .first()
                             .ok_or(BatchChatError::BatchNoChoices(custom_id))
                     })
-                    .map(|choice| choice.message.content.to_string())
+                    .map(|choice| {
+                        choice
+                            .message
+                            .clone()
+                            .content()
+                            .map_err(IndividualChatError::Refusal)
+                    })
             })
             .collect::<Result<Vec<_>, _>>()?;
 
