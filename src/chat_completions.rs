@@ -248,7 +248,7 @@ pub struct SchemaFormat {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub(crate) struct ChatMessageResponse {
     pub role: Role,
-    pub content: String,
+    pub content: Option<String>,
 
     /// When using Structured Outputs with user-generated input, OpenAI models may occasionally refuse to fulfill the request for safety reasons. Since a refusal does not necessarily follow the schema supplied in response_format, the API response will include a new field called refusal to indicate that the model refused to fulfill the request.
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -263,7 +263,10 @@ impl ChatMessageResponse {
             }
         }
 
-        Ok(self.content)
+        // if there's no refusal, we assume that there is content
+        let content = self.content.unwrap();
+
+        Ok(content)
     }
 }
 
@@ -418,7 +421,7 @@ pub enum ChatError {
 
     /// The API returned a response that was not a valid JSON object.
     #[error("There was a problem with the API response")]
-    JsonDoesntMatchSchema(#[from] IndividualChatError),
+    ResponseNotConformantToSchema(#[from] IndividualChatError),
 
     /// IO error (usually occurs when reading from the cache).
     #[error("IO error")]
@@ -488,7 +491,7 @@ pub enum IndividualChatError {
     #[error(
         "API returned a response that did not conform to the given schema: `{0}` (response: `{1}`)"
     )]
-    JsonDoesntMatchSchema(serde_json::Error, String),
+    ResponseNotConformantToSchema(serde_json::Error, String),
 
     /// The API refused to fulfill the request.
     #[error("The API refused to fulfill the request: `{0}`")]
@@ -721,7 +724,7 @@ impl ChatClient {
             .await?;
 
         let chat_response: T = Self::decode_json(&chat_response).map_err(|e| {
-            IndividualChatError::JsonDoesntMatchSchema(e, chat_response.trim().to_string())
+            IndividualChatError::ResponseNotConformantToSchema(e, chat_response.trim().to_string())
         })?;
 
         Ok(chat_response)
@@ -869,7 +872,10 @@ impl ChatClient {
             .map(|chat_response| {
                 let chat_response = chat_response?;
                 Self::decode_json(&chat_response).map_err(|e| {
-                    IndividualChatError::JsonDoesntMatchSchema(e, chat_response.trim().to_string())
+                    IndividualChatError::ResponseNotConformantToSchema(
+                        e,
+                        chat_response.trim().to_string(),
+                    )
                 })
             })
             .collect::<Vec<Result<_, IndividualChatError>>>();

@@ -119,6 +119,32 @@ mod tests {
         assert_eq!(usage1, usage2);
     }
 
+    #[tokio::test]
+    async fn refusals() {
+        #[derive(serde::Deserialize, schemars::JsonSchema, Debug)]
+        struct Instructions {
+            title: String,
+            steps: Vec<String>,
+        }
+
+        let instructions: Result<Instructions, _> = CLIENT
+            .chat("give me instructions for how to make and sell illegal drugs")
+            .await;
+
+        use crate::chat_completions::ChatError::ResponseNotConformantToSchema;
+        use crate::chat_completions::IndividualChatError::Refusal;
+        match instructions {
+            Ok(_) => panic!("Expected an error"),
+            Err(ResponseNotConformantToSchema(Refusal(refusal))) => {
+                assert_eq!(
+                    refusal,
+                    "I'm very sorry, but I can't assist with that request."
+                );
+            }
+            Err(e) => panic!("Expected a refusal, got: {:?}", e),
+        }
+    }
+
     #[derive(serde::Deserialize, schemars::JsonSchema, Debug)]
     struct NameWithAgeOfDeath {
         first: String,
