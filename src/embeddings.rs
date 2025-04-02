@@ -8,6 +8,8 @@ use serde::{Deserialize, Serialize};
 struct EmbeddingsRequest {
     model: String,
     input: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dimensions: Option<usize>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -55,9 +57,15 @@ pub struct EmbeddingsClient {
     /// The API key to use for the ChatGPT API.
     pub api_key: String,
     /// The URL of the ChatGPT API. Customize this if you are using a custom API that is compatible with OpenAI's.
-    pub url: url::Url,
+    pub base_url: url::Url,
+    /// The subpath to the chat-completions endpoint. By default, this is `embeddings`.
+    pub embeddings_path: String,
     /// The model to use for the ChatGPT API.
     pub model: String,
+    /// The number of documents to send in a single batch.
+    pub batch_size: usize,
+    /// Some embedding models are trained using a technique that allows them to have their dimensionality lowered without the embedding losing its concept-representing properties. Of OpenAI's models, only text-embedding-3 and later models support this functionality.
+    pub dimensions: Option<usize>,
 }
 
 /// Errors that can occur when interacting with the ChatGPT API.
@@ -96,9 +104,48 @@ impl EmbeddingsClient {
     pub fn new(api_key: impl Into<String>, model: impl Into<String>) -> Self {
         Self {
             api_key: api_key.into(),
-            url: "https://api.openai.com/v1/embeddings".parse().unwrap(),
+            base_url: "https://api.openai.com/v1/".parse().unwrap(),
+            embeddings_path: "embeddings".into(),
             model: model.into(),
+            batch_size: 500,
+            dimensions: None,
         }
+    }
+
+    /// Sets the number of documents to send in a single batch.
+    /// The default batch size is 500. If you have large documents, you may want to set the batch size to a lower value.
+    pub fn with_batch_size(self, batch_size: usize) -> Self {
+        Self { batch_size, ..self }
+    }
+
+    /// Sets the base URL
+    ///
+    /// Panics if the argument is not a valid URL.
+    pub fn with_url(mut self, url: impl Into<String>) -> Self {
+        let url = url.into();
+        let url = if url.ends_with('/') {
+            url
+        } else {
+            format!("{}/", url)
+        };
+
+        let url = url::Url::parse(&url).unwrap();
+        self.base_url = url;
+        self
+    }
+
+    /// Sets the number of dimensions the embeddings should have.
+    ///
+    /// Some embedding models are trained using a technique that allows them to have their dimensionality lowered without the embedding losing its concept-representing properties. Of OpenAI's models, only text-embedding-3 and later models support this functionality.
+    pub fn with_dimensions(self, dimensions: usize) -> Self {
+        Self {
+            dimensions: Some(dimensions),
+            ..self
+        }
+    }
+
+    fn embeddings_url(&self) -> url::Url {
+        self.base_url.join(&self.embeddings_path).unwrap()
     }
 
     /// Create a new [`EmbeddingsClient`].
@@ -122,20 +169,20 @@ impl EmbeddingsClient {
     /// Embed documents into a vector space.
     /// Documents are processed in batches of 100 to stay within API limits.
     pub async fn embed(&self, documents: Vec<String>) -> Result<Vec<Vector>, EmbeddingsError> {
-        const BATCH_SIZE: usize = 100;
         let documents_len = documents.len();
         let client = Client::new();
         let mut all_embeddings = Vec::with_capacity(documents_len);
 
         // Process documents in batches
-        for chunk in documents.chunks(BATCH_SIZE) {
+        for chunk in documents.chunks(self.batch_size) {
             let request = EmbeddingsRequest {
                 model: self.model.clone(),
                 input: chunk.to_vec(),
+                dimensions: self.dimensions,
             };
 
             let response = client
-                .post(self.url.clone())
+                .post(self.embeddings_url())
                 .header("Authorization", format!("Bearer {}", self.api_key))
                 .header("Content-Type", "application/json")
                 .json(&request)

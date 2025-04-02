@@ -549,7 +549,7 @@ impl ChatClient {
     /// ```
     ///
     /// Panics if the argument is not a valid URL.
-    pub fn with_url(mut self, url: impl Into<String>) -> Self {
+    pub fn with_url(self, url: impl Into<String>) -> Self {
         let url = url.into();
         let url = if url.ends_with('/') {
             url
@@ -558,8 +558,10 @@ impl ChatClient {
         };
 
         let url = url::Url::parse(&url).unwrap();
-        self.base_url = url;
-        self
+        Self {
+            base_url: url,
+            ..self
+        }
     }
 
     fn chat_completions_url(&self) -> url::Url {
