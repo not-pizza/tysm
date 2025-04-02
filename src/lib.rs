@@ -135,13 +135,25 @@ mod tests {
         use crate::chat_completions::IndividualChatError::Refusal;
         match instructions {
             Ok(_) => panic!("Expected an error"),
-            Err(ResponseNotConformantToSchema(Refusal(refusal))) => {
-                assert_eq!(
-                    refusal,
-                    "I'm very sorry, but I can't assist with that request."
-                );
-            }
-            Err(e) => panic!("Expected a refusal, got: {:?}", e),
+            Err(e) => match e {
+                ResponseNotConformantToSchema(Refusal(ref refusal)) => {
+                    assert_eq!(
+                        refusal,
+                        "I'm very sorry, but I can't assist with that request."
+                    );
+
+                    let e = anyhow::Error::from(e);
+                    let message = format!("{:?}", e);
+                    assert_eq!(
+                        message,
+                        r#"There was a problem with the API response
+
+Caused by:
+    The API refused to fulfill the request: `I'm very sorry, but I can't assist with that request.`"#
+                    )
+                }
+                e => panic!("Expected a refusal, got: {:?}", e),
+            },
         }
     }
 
