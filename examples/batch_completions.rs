@@ -45,6 +45,7 @@ async fn main() -> anyhow::Result<()> {
 
     println!("---");
     for response in responses {
+        let response = response?;
         println!("{} is the capital of {}", response.city, response.country);
     }
     println!("---");

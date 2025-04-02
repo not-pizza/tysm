@@ -6,7 +6,7 @@
 //! See the examples/ for more information.
 //! ```
 
-use log::info;
+use log::{debug, info};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -557,6 +557,7 @@ impl BatchClient {
             .ok_or_else(|| GetBatchResultsError::BatchNoOutputFile(batch.id.clone()))?;
 
         let content = self.files_client.download_file(output_file_id).await?;
+        debug!("Got results for batch {}: {}", batch.id, content);
 
         let mut results = Vec::new();
         for line in content.lines() {
