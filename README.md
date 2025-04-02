@@ -173,6 +173,8 @@ let response = client
   .await?;
 ```
 
+However, if you can get Claude to output JSON on one line, the non-raw methods may still work. This is because, in the event that the response cannot be decoded into the expected type, `tysm` will then attempt to decode each line individually. 
+
 The Batch API will also not work against Anthropic's API.
 
 #### "I want to use Gemini!"
