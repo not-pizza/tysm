@@ -14,14 +14,13 @@ async fn main() -> anyhow::Result<()> {
 
     println!("Embedding multiple documents:");
     // Embed multiple documents
-    let embeddings = client.embed(documents.clone()).await?;
+    let embeddings = client.embed(&documents).await?;
 
     // Print information about the embeddings
-    for (i, embedding) in embeddings.iter().enumerate() {
+    for (document, embedding) in embeddings.iter() {
         println!(
-            "Document {}: \"{}\" -> Vector with {} dimensions (showing first 5: {:?}...)",
-            i + 1,
-            documents[i],
+            "\"{}\" -> Vector with {} dimensions (showing first 5: {:?}...)",
+            document,
             embedding.dimension(),
             &embedding.elements[..5.min(embedding.dimension())]
         );
@@ -44,7 +43,7 @@ async fn main() -> anyhow::Result<()> {
     if !embeddings.is_empty() && !single_embedding.elements.is_empty() {
         println!("\nCalculating cosine similarity between embeddings:");
 
-        for (i, doc_embedding) in embeddings.iter().enumerate() {
+        for (i, (_, doc_embedding)) in embeddings.iter().enumerate() {
             let similarity = doc_embedding.cosine_similarity(&single_embedding);
             println!(
                 "Similarity between document {} and single document: {:.4}",

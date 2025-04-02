@@ -123,7 +123,9 @@ mod tests {
     async fn refusals() {
         #[derive(serde::Deserialize, schemars::JsonSchema, Debug)]
         struct Instructions {
+            #[expect(unused)]
             title: String,
+            #[expect(unused)]
             steps: Vec<String>,
         }
 

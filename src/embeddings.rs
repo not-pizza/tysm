@@ -1,13 +1,14 @@
 //! Embeddings are a way to represent text in a vector space.
 //! This module provides a client for interacting with the OpenAI Embeddings API.
 
+use itertools::Itertools;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-struct EmbeddingsRequest {
+#[derive(Debug, Serialize, Clone)]
+struct EmbeddingsRequest<'a> {
     model: String,
-    input: Vec<String>,
+    input: Vec<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     dimensions: Option<usize>,
 }
@@ -160,24 +161,43 @@ impl EmbeddingsClient {
         Ok(Self::new(api_key()?, model))
     }
 
-    /// Embed a single document into a vector space.
+    /// Embed a single document into vector space.
     pub async fn embed_single(&self, document: String) -> Result<Vector, EmbeddingsError> {
-        let embeddings = self.embed(vec![document]).await?;
-        Ok(embeddings.first().unwrap().clone())
+        let documents = &[document];
+        let embeddings = self.embed(documents).await?;
+        Ok(embeddings.first().unwrap().1.clone())
     }
 
-    /// Embed documents into a vector space.
-    /// Documents are processed in batches of 100 to stay within API limits.
-    pub async fn embed(&self, documents: Vec<String>) -> Result<Vec<Vector>, EmbeddingsError> {
+    /// Embed documents into vector space.
+    ///
+    /// Documents are processed in batches to stay within API limits
+    pub async fn embed<'a>(
+        &self,
+        documents: &'a [String],
+    ) -> Result<Vec<(&'a String, Vector)>, EmbeddingsError> {
+        self.embed_fn(documents, |s| s).await
+    }
+
+    /// Embed documents into vector space. A function can be provided to map the documents to strings.
+    ///
+    /// Documents are processed in batches to stay within API limits.
+    pub async fn embed_fn<'a, T>(
+        &self,
+        documents: &'a [T],
+        f: impl Fn(&'a T) -> &'a str,
+    ) -> Result<Vec<(&'a T, Vector)>, EmbeddingsError> {
         let documents_len = documents.len();
         let client = Client::new();
         let mut all_embeddings = Vec::with_capacity(documents_len);
 
         // Process documents in batches
-        for chunk in documents.chunks(self.batch_size) {
+        let documents = documents.iter().map(|t| (t, f(t))).chunks(self.batch_size);
+        for chunk in &documents {
+            let (data, documents) = chunk.into_iter().unzip::<_, _, Vec<_>, Vec<_>>();
+            let documents_len = documents.len();
             let request = EmbeddingsRequest {
                 model: self.model.clone(),
-                input: chunk.to_vec(),
+                input: documents,
                 dimensions: self.dimensions,
             };
 
@@ -213,13 +233,16 @@ impl EmbeddingsClient {
                 }
             };
 
-            if embeddings_response.data.len() != chunk.len() {
+            if embeddings_response.data.len() != documents_len {
                 return Err(EmbeddingsError::IncorrectNumberOfEmbeddings);
             }
 
-            all_embeddings.extend(embeddings_response.data.into_iter().map(|e| Vector {
-                elements: e.embedding,
-            }));
+            all_embeddings.extend(
+                data.into_iter()
+                    .zip(embeddings_response.data.into_iter().map(|e| Vector {
+                        elements: e.embedding,
+                    })),
+            );
         }
 
         Ok(all_embeddings)
