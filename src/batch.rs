@@ -4,7 +4,6 @@
 //! a separate pool of significantly higher rate limits, and a clear 24-hour turnaround time.
 //!
 //! See the examples/ for more information.
-//! ```
 
 use log::{debug, info};
 use reqwest::Client;

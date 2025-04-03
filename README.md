@@ -192,7 +192,7 @@ let client = ChatClient::new(api_key, "gemini-2.0-flash").with_url("https://gene
 
 ```rust
 use tysm::chat_completions::ChatClient;
-let api_key = "required_but_unused".to_string();
+let api_key = "required_but_unused";
 let client = ChatClient::new(api_key, "llama2").with_url("httphttp://localhost:11434/v1/");
 ```
 
