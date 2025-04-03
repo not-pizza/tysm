@@ -31,6 +31,7 @@ The **Typed Chat Completions** feature is the most interesting part, so most of 
     - [Custom API URL](#custom-api-url)
       - ["I want to use Anthropic!"](#i-want-to-use-anthropic)
       - ["I want to use Gemini!"](#i-want-to-use-gemini)
+      - ["I want to use Ollama!"](#i-want-to-use-ollama)
   - [Feature flags](#feature-flags)
   - [License](#license)
   - [Backstory](#backstory)
@@ -185,6 +186,14 @@ Gemini luckily does support structured outputs. So you can just use your Gemini 
 use tysm::chat_completions::ChatClient;
 let api_key = std::env::var("GEMINI_API_KEY").unwrap();
 let client = ChatClient::new(api_key, "gemini-2.0-flash").with_url("https://generativelanguage.googleapis.com/v1beta/openai/");
+```
+
+#### "I want to use Ollama!"
+
+```rust
+use tysm::chat_completions::ChatClient;
+let api_key = "required_but_unused".to_string();
+let client = ChatClient::new(api_key, "llama2").with_url("httphttp://localhost:11434/v1/");
 ```
 
 ## Feature flags
