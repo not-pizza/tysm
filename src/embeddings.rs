@@ -181,17 +181,21 @@ impl EmbeddingsClient {
     /// Embed documents into vector space. A function can be provided to map the documents to strings.
     ///
     /// Documents are processed in batches to stay within API limits.
-    pub async fn embed_fn<'a, T>(
+    pub async fn embed_fn<'a, T, S: AsRef<str>>(
         &self,
         documents: &'a [T],
-        f: impl Fn(&'a T) -> &'a str,
+        f: impl Fn(&'a T) -> S,
     ) -> Result<Vec<(&'a T, Vector)>, EmbeddingsError> {
         let documents_len = documents.len();
         let client = Client::new();
         let mut all_embeddings = Vec::with_capacity(documents_len);
 
         // Process documents in batches
-        let documents = documents.iter().map(|t| (t, f(t))).chunks(self.batch_size);
+        let documents = documents.iter().map(|t| (t, f(t))).collect::<Vec<_>>();
+        let documents = documents
+            .iter()
+            .map(|(t, s)| (t, s.as_ref()))
+            .chunks(self.batch_size);
         for chunk in &documents {
             let (data, documents) = chunk.into_iter().unzip::<_, _, Vec<_>, Vec<_>>();
             let documents_len = documents.len();
