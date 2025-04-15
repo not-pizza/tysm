@@ -51,6 +51,21 @@ pub(crate) const CHAT_COMPLETIONS: &[ModelCost] = &[
         input: 1.10,
         output: 4.40,
     },
+    ModelCost {
+        name: "gpt-4.1",
+        input: 2.0,
+        output: 8.0,
+    },
+    ModelCost {
+        name: "gpt-4.1-mini",
+        input: 0.4,
+        output: 1.6,
+    },
+    ModelCost {
+        name: "gpt-4.1-nano",
+        input: 0.1,
+        output: 0.4,
+    },
 ];
 
 pub(crate) fn cost(model: &str, usage: crate::chat_completions::ChatUsage) -> Option<f64> {
