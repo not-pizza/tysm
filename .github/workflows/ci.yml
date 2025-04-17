@@ -8,6 +8,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  OPENAI_API_KEY: sk-1234567890
 
 jobs:
   build-clippy:
