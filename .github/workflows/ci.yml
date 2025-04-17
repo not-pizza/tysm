@@ -53,6 +53,8 @@ jobs:
         with:
           command: clippy
           args: --workspace ${{ matrix.flags }} -- -D warnings
+      - name: Check semver
+        uses: obi1kenobi/cargo-semver-checks-action@v2
 
   test:
     strategy:
