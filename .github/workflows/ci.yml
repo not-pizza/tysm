@@ -53,8 +53,6 @@ jobs:
         with:
           command: clippy
           args: --workspace ${{ matrix.flags }} -- -D warnings
-      - name: Check semver
-        uses: obi1kenobi/cargo-semver-checks-action@v2
 
   test:
     strategy:
@@ -99,3 +97,23 @@ jobs:
         with:
           command: nextest
           args: run --all ${{ matrix.flags }}
+
+  check-semver:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Setup Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: "1.85.0"
+          override: true
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: v1 # increment this to bust the cache if needed
+
+      - name: Check semver
+        uses: obi1kenobi/cargo-semver-checks-action@v2
