@@ -1,36 +1,99 @@
-name: CI
+name: continuous-integration
 
 on:
   push:
-    branches: ["main"]
+    branches: [main, master]
   pull_request:
-    branches: ["main"]
+    branches: [main, master]
 
 env:
   CARGO_TERM_COLOR: always
-  OPENAI_API_KEY: sk-1234567890
 
 jobs:
-  check:
-    name: Check
-    runs-on: ubuntu-latest
+  build-clippy:
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [ubuntu-latest]
+        style: [no_default, default]
+        rust:
+          - "1.85.0"
+        include:
+          - style: no_default
+            flags: "--no-default-features"
+          - style: default
+            flags: ""
+        exclude:
+          - platform: windows-latest
+            style: default
+          - platform: macos-latest
+            style: default
+    runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v2
+      - name: Setup Rust toolchain
+        uses: actions-rs/toolchain@v1
         with:
+          profile: minimal
+          toolchain: ${{ matrix.rust }}
+          override: true
           components: rustfmt, clippy
 
-      - name: Check formatting
-        run: cargo fmt --all -- --check
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.style }}v1 # increment this to bust the cache if needed
 
-      - name: Run clippy
-        run: cargo clippy -- -D warnings
+      - name: Rustfmt
+        uses: actions-rs/cargo@v1
+        with:
+          command: fmt
+          args: --all -- --check
+      - name: Clippy
+        uses: actions-rs/cargo@v1
+        with:
+          command: clippy
+          args: --workspace ${{ matrix.flags }} -- -D warnings
 
-      - name: Run tests
-        run: cargo test --verbose
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [ubuntu-latest]
+        style: [no_default, default]
+        rust:
+          - "1.85.0"
+        include:
+          - style: no_default
+            flags: "--no-default-features"
+          - style: default
+            flags: ""
+        exclude:
+          - platform: windows-latest
+            style: default
+          - platform: macos-latest
+            style: default
 
-      - name: Build docs
-        run: cargo doc --no-deps
+    runs-on: ${{ matrix.platform }}
 
-      - name: Check semver
-        uses: obi1kenobi/cargo-semver-checks-action@v2
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Setup Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: ${{ matrix.rust }}
+          override: true
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.style }}v1 # increment this to bust the cache if needed
+
+      - uses: taiki-e/install-action@nextest
+
+      - name: Tests
+        uses: actions-rs/cargo@v1
+        with:
+          command: nextest
+          args: run --all ${{ matrix.flags }}
