@@ -9,9 +9,9 @@ impl std::fmt::Display for OpenAiApiKeyError {
 impl std::error::Error for OpenAiApiKeyError {}
 
 pub(crate) fn api_key() -> Result<String, OpenAiApiKeyError> {
-    #[cfg(feature = "dotenv")]
+    #[cfg(feature = "dotenvy")]
     {
-        use dotenv::dotenv;
+        use dotenvy::dotenv;
         dotenv().ok();
     }
     std::env::var("OPENAI_API_KEY").map_err(OpenAiApiKeyError)
