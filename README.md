@@ -200,9 +200,9 @@ let client = ChatClient::new(api_key, "llama2").with_url("httphttp://localhost:1
 
 The following feature flags are available:
 
-1. `dotenv` - (enabled by default) Enables automatic loading of environment variables from a `.env` file. 
+1. `dotenvy` - (enabled by default) Enables automatic loading of environment variables from a `.env` file. 
 
-Example of disabling dotenv:
+Example of disabling dotenvy:
 ```toml
 [dependencies]
 tysm = { version = "0.2", default-features = false }
@@ -220,7 +220,7 @@ I like making ChatGPT-wrappers. Unfortunately the rust ecosystem for calling Cha
 
 I was in the middle of writing my 6th on a lazy christmas eve when I realized that I'm too lazy to keep doing that. So I decided to solve the problem for myself once and for all.
 
-I almost never use streaming or anything fancy like that so this library doesn't support it. I designed it with my future lazy self in mind - which is why it has dotenv built in and has built-in caching.
+I almost never use streaming or anything fancy like that so this library doesn't support it. I designed it with my future lazy self in mind - which is why it has `.env` support built in and has built-in caching.
 
 The whole library is basically one file right now, so hopefully it will be easy for you to move on from once you outgrow it.
 
