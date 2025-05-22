@@ -32,6 +32,24 @@ pub(crate) const CHAT_COMPLETIONS: &[ModelCost] = &[
         cached_input: None,
         output: 75.0,
     },
+    ModelCost {
+        name: "claude-opus-4",
+        input: 15.0,
+        cached_input: None,
+        output: 75.0,
+    },
+    ModelCost {
+        name: "claude-sonnet-4",
+        input: 3.0,
+        cached_input: None,
+        output: 15.0,
+    },
+    ModelCost {
+        name: "claude-haiku-4",
+        input: 0.80,
+        cached_input: None,
+        output: 4.0,
+    },
     // OpenAI
     // Copied from https://platform.openai.com/docs/pricing on 2025-04-17
     ModelCost {
