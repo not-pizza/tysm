@@ -1336,7 +1336,7 @@ dependencies = [
 
 [[package]]
 name = "tysm"
-version = "0.7.0-alpha.2"
+version = "0.7.1"
 dependencies = [
  "anyhow",
  "dotenvy",
