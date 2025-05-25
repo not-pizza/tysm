@@ -22,7 +22,7 @@ default = ["dotenvy"]
 dotenvy = { version = "0.15.0", optional = true }
 reqwest = { version = "0.11.20", features = ["json", "multipart", "stream"] }
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0.107"
+serde_json = { version = "1.0.107", features = ["preserve_order"] }
 thiserror = "2.0.9"
 tynm = "0.1.10"
 lru = "0.12.5"

@@ -27,6 +27,7 @@ impl Transform for OpenAiTransform {
                     .unwrap_or_default()
                     .into_iter()
                     .collect::<HashSet<_>>();
+
                 // get the "required" array
                 let required = obj
                     .get("required")
@@ -38,10 +39,17 @@ impl Transform for OpenAiTransform {
 
                 if properties != required {
                     // add all the properties to the "required" array
-                    obj.insert(
-                        "required".to_string(),
-                        Value::Array(properties.into_iter().collect()),
-                    );
+                    let mut required_vec: Vec<Value> = properties.into_iter().collect();
+                    // Sort for deterministic ordering
+                    required_vec
+                        .sort_by(|a, b| a.as_str().unwrap_or("").cmp(b.as_str().unwrap_or("")));
+                    obj.insert("required".to_string(), Value::Array(required_vec));
+                } else {
+                    // Even if properties == required, we need to ensure the array is sorted
+                    if let Some(Value::Array(required_array)) = obj.get_mut("required") {
+                        required_array
+                            .sort_by(|a, b| a.as_str().unwrap_or("").cmp(b.as_str().unwrap_or("")));
+                    }
                 }
             }
 

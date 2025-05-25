@@ -277,7 +277,7 @@ impl FilesClient {
             UploadFileResponse::Error(error) => Err(FilesError::ApiError(error)),
         }
     }
-g
+
     /// List all files in the OpenAI API.
     ///
     /// ```rust,no_run

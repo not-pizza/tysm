@@ -166,7 +166,8 @@ pub struct ChatRequest {
 
 impl ChatRequest {
     fn cache_key(&self) -> String {
-        let id = const_xxh3(serde_json::to_string(&self).unwrap().as_bytes());
+        let serialized = serde_json::to_string(&self).unwrap();
+        let id = const_xxh3(serialized.as_bytes());
         format!("tysm-v1-chat_request-{}.zstd", id)
     }
 }
@@ -1057,6 +1058,12 @@ impl ChatClient {
 
         // Then, check the cache directory
         let cache_directory = self.cache_directory.as_ref()?;
+        if !cache_directory.exists() {
+            panic!(
+                "Cache directory does not exist: {}",
+                cache_directory.display()
+            );
+        }
         let cache_path = cache_directory.join(chat_request_cache_key);
 
         // Read the compressed data from disk
