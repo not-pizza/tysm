@@ -118,8 +118,16 @@ pub enum FilesError {
     RequestError(#[from] reqwest::Error),
 
     /// An error occurred when deserializing the response from the API.
-    #[error("API returned an unknown response: {0} \nerror: {1}")]
-    ApiParseError(String, serde_json::Error),
+    #[error("API {url} returned an unknown response: {response}")]
+    ApiParseError {
+        /// The URL of the API that returned the error.
+        url: String,
+        /// The response from the API.
+        response: String,
+        /// The error that occurred when deserializing the response.
+        #[source]
+        error: serde_json::Error,
+    },
 
     /// An error occurred when deserializing the response from the API.
     #[error("API returned an error response")]
@@ -201,7 +209,7 @@ impl FilesClient {
         let client = Client::new();
         let url = remove_trailing_slash(self.files_url());
         let response = client
-            .post(url)
+            .post(url.clone())
             .header("Authorization", format!("Bearer {}", self.api_key))
             .multipart(form)
             .send()
@@ -209,8 +217,12 @@ impl FilesClient {
 
         let response_text = response.text().await?;
 
-        let file_object: UploadFileResponse = serde_json::from_str(&response_text)
-            .map_err(|e| FilesError::ApiParseError(response_text, e))?;
+        let file_object: UploadFileResponse =
+            serde_json::from_str(&response_text).map_err(|e| FilesError::ApiParseError {
+                url: url.to_string(),
+                response: response_text.clone(),
+                error: e,
+            })?;
 
         match file_object {
             UploadFileResponse::File(file) => Ok(file),
@@ -245,7 +257,7 @@ impl FilesClient {
         let client = Client::new();
         let url = remove_trailing_slash(self.files_url());
         let response = client
-            .post(url)
+            .post(url.clone())
             .header("Authorization", format!("Bearer {}", self.api_key))
             .multipart(form)
             .send()
@@ -253,15 +265,19 @@ impl FilesClient {
 
         let response_text = response.text().await?;
 
-        let file_object: UploadFileResponse = serde_json::from_str(&response_text)
-            .map_err(|e| FilesError::ApiParseError(response_text, e))?;
+        let file_object: UploadFileResponse =
+            serde_json::from_str(&response_text).map_err(|e| FilesError::ApiParseError {
+                url: url.to_string(),
+                response: response_text.clone(),
+                error: e,
+            })?;
 
         match file_object {
             UploadFileResponse::File(file) => Ok(file),
             UploadFileResponse::Error(error) => Err(FilesError::ApiError(error)),
         }
     }
-
+g
     /// List all files in the OpenAI API.
     ///
     /// ```rust,no_run

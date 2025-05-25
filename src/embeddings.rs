@@ -77,8 +77,18 @@ pub enum EmbeddingsError {
     RequestError(#[from] reqwest::Error),
 
     /// An error occurred when deserializing the response from the API.
-    #[error("API returned an unknown response: {0} | error: {1} | request: {2}")]
-    ApiParseError(String, serde_json::Error, String),
+    #[error("API {url} returned an unknown response: {response} | request: {request}")]
+    ApiParseError {
+        /// The URL of the API that returned the error.
+        url: String,
+        /// The response from the API.
+        response: String,
+        /// The request that was sent to the API.
+        request: String,
+        /// The error that occurred when deserializing the response.
+        #[source]
+        error: serde_json::Error,
+    },
 
     /// An error occurred when deserializing the response from the API.
     #[error("API returned an error response for request: {1}")]
@@ -133,6 +143,16 @@ impl EmbeddingsClient {
         let url = url::Url::parse(&url).unwrap();
         self.base_url = url;
         self
+    }
+
+    /// Sets the path to the embeddings endpoint.
+    ///
+    /// By default, this is `embeddings`.
+    pub fn with_path(self, path: impl Into<String>) -> Self {
+        Self {
+            embeddings_path: path.into(),
+            ..self
+        }
     }
 
     /// Sets the number of dimensions the embeddings should have.
@@ -217,11 +237,12 @@ impl EmbeddingsClient {
 
             let embeddings_response: EmbeddingsResponseOrError =
                 serde_json::from_str(&response_text).map_err(|e| {
-                    EmbeddingsError::ApiParseError(
-                        response_text.clone(),
-                        e,
-                        serde_json::to_string(&request).unwrap(),
-                    )
+                    EmbeddingsError::ApiParseError {
+                        url: self.embeddings_url().to_string(),
+                        response: response_text.clone(),
+                        request: serde_json::to_string(&request).unwrap(),
+                        error: e,
+                    }
                 })?;
 
             let embeddings_response = match embeddings_response {
@@ -367,5 +388,12 @@ impl Vector {
     /// Get the dimension (number of elements) of the vector.
     pub fn dimension(&self) -> usize {
         self.elements.len()
+    }
+
+    /// Truncate the vector to the given number of dimensions.
+    pub fn truncate(&self, dimensions: usize) -> Self {
+        Self {
+            elements: self.elements.iter().take(dimensions).copied().collect(),
+        }
     }
 }
