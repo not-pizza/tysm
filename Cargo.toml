@@ -1,6 +1,6 @@
 [package]
 name = "tysm"
-version = "0.7.0"
+version = "0.8.0"
 edition = "2021"
 description = "Batteries-included Rust OpenAI Client"
 license = "MIT"
