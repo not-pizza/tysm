@@ -54,7 +54,7 @@ mod utils;
 pub use utils::OpenAiApiKeyError;
 
 /// Emitted by the OpenAI API when an error occurs.
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
 pub struct OpenAiError {
     /// The type of the error
     pub r#type: String,

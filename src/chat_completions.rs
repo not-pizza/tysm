@@ -271,34 +271,26 @@ impl ChatMessageResponse {
     }
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Debug, Clone, Serialize)]
 struct ChatResponse {
-    #[expect(unused)]
     id: String,
-    #[expect(unused)]
     object: String,
-    #[expect(unused)]
     created: u64,
-    #[expect(unused)]
     model: String,
-    #[expect(unused)]
     system_fingerprint: Option<String>,
     choices: Vec<ChatChoice>,
     usage: ChatUsage,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Debug, Clone, Serialize)]
 struct ChatChoice {
-    #[expect(unused)]
     index: u8,
     message: ChatMessageResponse,
-    #[expect(unused)]
     logprobs: Option<serde_json::Value>,
-    #[expect(unused)]
     finish_reason: String,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Serialize)]
 enum ChatResponseOrError {
     #[serde(rename = "error")]
     Error(OpenAiError),
@@ -308,7 +300,7 @@ enum ChatResponseOrError {
 }
 
 /// The token consumption of the chat-completions API.
-#[derive(Deserialize, Debug, Default, Clone, Copy, Eq, PartialEq)]
+#[derive(Deserialize, Debug, Default, Clone, Copy, Eq, PartialEq, Serialize)]
 pub struct ChatUsage {
     /// The number of tokens used for the prompt.
     pub prompt_tokens: u32,
@@ -327,7 +319,7 @@ pub struct ChatUsage {
 
 /// Includes details about the prompt tokens.
 /// Currently, only contains the number of cached tokens.
-#[derive(Deserialize, Debug, Default, Clone, Copy, Eq, PartialEq)]
+#[derive(Deserialize, Debug, Default, Clone, Copy, Eq, PartialEq, Serialize)]
 pub struct PromptTokenDetails {
     /// OpenAI automatically caches tokens that are used in a previous request.
     /// This reduces input cost.
@@ -335,7 +327,7 @@ pub struct PromptTokenDetails {
 }
 
 /// Includes details about the completion tokens for reasoning models
-#[derive(Deserialize, Debug, Default, Clone, Copy, Eq, PartialEq)]
+#[derive(Deserialize, Debug, Default, Clone, Copy, Eq, PartialEq, Serialize)]
 pub struct CompletionTokenDetails {
     /// The number of tokens used for reasoning.
     pub reasoning_tokens: u32,
@@ -731,16 +723,16 @@ impl ChatClient {
         };
 
         let chat_response = self
-            .chat_with_messages_raw(messages, response_format)
+            .chat_with_messages_raw_mapped(messages, response_format, |chat_response| {
+                Self::decode_json(&chat_response).map_err(|e| {
+                    ChatError::ChatError(IndividualChatError::ResponseNotConformantToSchema {
+                        error: e,
+                        response: chat_response.trim().to_string(),
+                        schema: serde_json::to_string(&json_schema.schema).unwrap(),
+                    })
+                })
+            })
             .await?;
-
-        let chat_response: T = Self::decode_json(&chat_response).map_err(|e| {
-            IndividualChatError::ResponseNotConformantToSchema {
-                error: e,
-                response: chat_response.trim().to_string(),
-                schema: serde_json::to_string(&json_schema.schema).unwrap(),
-            }
-        })?;
 
         Ok(chat_response)
     }
@@ -751,6 +743,17 @@ impl ChatClient {
         messages: Vec<ChatMessage>,
         response_format: ResponseFormat,
     ) -> Result<String, ChatError> {
+        self.chat_with_messages_raw_mapped(messages, response_format, |response| Ok(response))
+            .await
+    }
+
+    /// Send a sequence of chat messages to the API, then map the response to a different type. The response will only be cached if the mapping succeeds.
+    async fn chat_with_messages_raw_mapped<T>(
+        &self,
+        messages: Vec<ChatMessage>,
+        response_format: ResponseFormat,
+        map_response: impl Fn(String) -> Result<T, ChatError>,
+    ) -> Result<T, ChatError> {
         let chat_request = ChatRequest {
             model: self.model.clone(),
             messages,
@@ -759,8 +762,7 @@ impl ChatClient {
 
         let chat_request_str = serde_json::to_string(&chat_request).unwrap();
 
-        let chat_response = if let Some(cached_response) = self.chat_cached(&chat_request).await {
-            debug!("Using cached response: {cached_response}");
+        let process_result = |cached_response: String| -> Result<T, ChatError> {
             let chat_response: ChatResponseOrError = serde_json::from_str(&cached_response)
                 .map_err(|e| {
                     let chat_request_str = if chat_request_str.len() > 100 {
@@ -778,7 +780,7 @@ impl ChatClient {
                         request: chat_request_str,
                     }
                 })?;
-            match chat_response {
+            let response = match chat_response {
                 ChatResponseOrError::Response(response) => response,
                 ChatResponseOrError::Error(error) => {
                     let chat_request_str = if chat_request_str.len() > 100 {
@@ -792,36 +794,54 @@ impl ChatClient {
                     };
                     return Err(ChatError::ApiError(error, chat_request_str));
                 }
-            }
-        } else {
-            let chat_response = self.chat_uncached(&chat_request).await?;
-            debug!("Got response from API: {chat_response}");
-            let chat_response: ChatResponseOrError =
-                serde_json::from_str(&chat_response).map_err(|e| ChatError::ApiParseError {
-                    response: chat_response.clone(),
-                    error: e,
-                    request: chat_request_str.clone(),
-                })?;
-            let chat_response = match chat_response {
-                ChatResponseOrError::Response(response) => response,
-                ChatResponseOrError::Error(error) => {
-                    return Err(ChatError::ApiError(error, chat_request_str));
-                }
             };
+            let choice = response
+                .choices
+                .into_iter()
+                .next()
+                .ok_or(ChatError::NoChoices)?;
+            let chat_response = choice
+                .message
+                .content()
+                .map_err(IndividualChatError::Refusal)?;
 
-            if let Ok(mut usage) = self.usage.write() {
-                *usage += chat_response.usage;
-            }
-            chat_response
+            map_response(chat_response)
         };
-        let message = chat_response
-            .choices
-            .first()
-            .ok_or(ChatError::NoChoices)?
-            .message
-            .clone();
 
-        let chat_response = message.content().map_err(IndividualChatError::Refusal)?;
+        let chat_response =
+            if let Some(cached_response) = self.chat_cached(&chat_request, process_result).await {
+                debug!("Using cached response");
+                cached_response?
+            } else {
+                let chat_response = self.chat_uncached(&chat_request).await?;
+                let result = process_result(chat_response.clone())?;
+
+                // cache the response
+                {
+                    let chat_request_cache_key = chat_request.cache_key();
+                    let chat_request = serde_json::to_string(&chat_request)
+                        .map_err(|e| ChatError::JsonSerializeError(e, chat_request.clone()))?;
+
+                    if let Some(cache_directory) = &self.cache_directory {
+                        if !cache_directory.exists() {
+                            tokio::fs::create_dir_all(&cache_directory).await?;
+                        }
+
+                        let cache_path = cache_directory.join(chat_request_cache_key);
+
+                        // Compress the response with zstd before writing to disk
+                        let compressed = zstd::encode_all(chat_response.as_bytes(), 3)?;
+                        tokio::fs::write(&cache_path, compressed).await?;
+                    }
+
+                    self.lru
+                        .write()
+                        .ok()
+                        .unwrap()
+                        .put(chat_request, chat_response.clone());
+                }
+                result
+            };
 
         Ok(chat_response)
     }
@@ -1060,7 +1080,11 @@ impl ChatClient {
         Ok(results)
     }
 
-    async fn chat_cached(&self, chat_request: &ChatRequest) -> Option<String> {
+    async fn chat_cached<T>(
+        &self,
+        chat_request: &ChatRequest,
+        map_response: impl Fn(String) -> Result<T, ChatError>,
+    ) -> Option<Result<T, ChatError>> {
         let chat_request_cache_key = chat_request.cache_key();
         let chat_request = serde_json::to_string(chat_request).ok()?;
 
@@ -1069,7 +1093,7 @@ impl ChatClient {
             let lru = self.lru.read().ok()?;
             let response = lru.peek(&chat_request);
             if let Some(response) = response {
-                return Some(response.clone());
+                return Some(map_response(response.clone()));
             }
         }
 
@@ -1092,7 +1116,7 @@ impl ChatClient {
         // Convert bytes back to string
         let response = String::from_utf8(decompressed_data).ok()?;
 
-        Some(response)
+        Some(map_response(response))
     }
 
     async fn chat_uncached(&self, chat_request: &ChatRequest) -> Result<String, ChatError> {
@@ -1107,31 +1131,6 @@ impl ChatClient {
             .await?
             .text()
             .await?;
-
-        // simple heuristic to avoid caching errors
-        if !response.starts_with("{\"error\":") && !response.starts_with("error code") {
-            let chat_request_cache_key = chat_request.cache_key();
-            let chat_request = serde_json::to_string(chat_request)
-                .map_err(|e| ChatError::JsonSerializeError(e, chat_request.clone()))?;
-
-            self.lru
-                .write()
-                .ok()
-                .unwrap()
-                .put(chat_request, response.clone());
-
-            if let Some(cache_directory) = &self.cache_directory {
-                if !cache_directory.exists() {
-                    tokio::fs::create_dir_all(&cache_directory).await?;
-                }
-
-                let cache_path = cache_directory.join(chat_request_cache_key);
-
-                // Compress the response with zstd before writing to disk
-                let compressed = zstd::encode_all(response.as_bytes(), 3)?;
-                tokio::fs::write(&cache_path, compressed).await?;
-            }
-        }
 
         Ok(response)
     }
