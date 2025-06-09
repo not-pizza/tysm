@@ -422,7 +422,7 @@ pub enum ChatError {
 
     /// The API returned a response that was not a valid JSON object.
     #[error("There was a problem with the API response")]
-    ResponseNotConformantToSchema(#[from] IndividualChatError),
+    ChatError(#[from] IndividualChatError),
 
     /// IO error (usually occurs when reading from the cache).
     #[error("IO error")]
@@ -490,9 +490,17 @@ pub enum BatchChatError {
 pub enum IndividualChatError {
     /// The API returned a response that did not conform to the given schema.
     #[error(
-        "API returned a response that did not conform to the given schema: `{0}` (response: `{1}`)"
+        "API returned a response that did not conform to the given schema: `{schema}` (response: `{response}`)"
     )]
-    ResponseNotConformantToSchema(serde_json::Error, String),
+    ResponseNotConformantToSchema {
+        /// The error that occurred when deserializing the response.
+        #[source]
+        error: serde_json::Error,
+        /// The response from the API.
+        response: String,
+        /// The schema that the response was supposed to conform to.
+        schema: String,
+    },
 
     /// The API refused to fulfill the request.
     #[error("The API refused to fulfill the request: `{0}`")]
@@ -718,14 +726,20 @@ impl ChatClient {
     ) -> Result<T, ChatError> {
         let json_schema = JsonSchemaFormat::new::<T>();
 
-        let response_format = ResponseFormat::JsonSchema { json_schema };
+        let response_format = ResponseFormat::JsonSchema {
+            json_schema: json_schema.clone(),
+        };
 
         let chat_response = self
             .chat_with_messages_raw(messages, response_format)
             .await?;
 
         let chat_response: T = Self::decode_json(&chat_response).map_err(|e| {
-            IndividualChatError::ResponseNotConformantToSchema(e, chat_response.trim().to_string())
+            IndividualChatError::ResponseNotConformantToSchema {
+                error: e,
+                response: chat_response.trim().to_string(),
+                schema: serde_json::to_string(&json_schema.schema).unwrap(),
+            }
         })?;
 
         Ok(chat_response)
@@ -857,7 +871,9 @@ impl ChatClient {
     ) -> Result<Vec<Result<T, IndividualChatError>>, BatchChatError> {
         let json_schema = JsonSchemaFormat::new::<T>();
 
-        let response_format = ResponseFormat::JsonSchema { json_schema };
+        let response_format = ResponseFormat::JsonSchema {
+            json_schema: json_schema.clone(),
+        };
 
         let chat_responses = self
             .batch_chat_with_messages_raw(
@@ -873,10 +889,11 @@ impl ChatClient {
             .map(|chat_response| {
                 let chat_response = chat_response?;
                 Self::decode_json(&chat_response).map_err(|e| {
-                    IndividualChatError::ResponseNotConformantToSchema(
-                        e,
-                        chat_response.trim().to_string(),
-                    )
+                    IndividualChatError::ResponseNotConformantToSchema {
+                        error: e,
+                        response: chat_response.trim().to_string(),
+                        schema: serde_json::to_string(&json_schema.schema).unwrap(),
+                    }
                 })
             })
             .collect::<Vec<Result<_, IndividualChatError>>>();
