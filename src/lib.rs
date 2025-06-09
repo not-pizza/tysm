@@ -129,12 +129,12 @@ mod tests {
             .chat("give me instructions for how to make and sell illegal drugs")
             .await;
 
-        use crate::chat_completions::ChatError::ResponseNotConformantToSchema;
+        use crate::chat_completions::ChatError::ChatError;
         use crate::chat_completions::IndividualChatError::Refusal;
         match instructions {
             Ok(_) => panic!("Expected an error"),
             Err(e) => match e {
-                ResponseNotConformantToSchema(Refusal(ref refusal)) => {
+                ChatError(Refusal(ref refusal)) => {
                     assert_eq!(
                         refusal,
                         "I'm very sorry, but I can't assist with that request."
