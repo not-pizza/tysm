@@ -743,7 +743,7 @@ impl ChatClient {
         messages: Vec<ChatMessage>,
         response_format: ResponseFormat,
     ) -> Result<String, ChatError> {
-        self.chat_with_messages_raw_mapped(messages, response_format, |response| Ok(response))
+        self.chat_with_messages_raw_mapped(messages, response_format, Ok)
             .await
     }
 
