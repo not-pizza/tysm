@@ -126,9 +126,9 @@ pub(crate) const CHAT_COMPLETIONS: &[ModelCost] = &[
     },
     ModelCost {
         name: "o3",
-        input: 10.00,
-        cached_input: Some(2.50),
-        output: 40.00,
+        input: 2.00,
+        cached_input: Some(0.50),
+        output: 8.00,
     },
     ModelCost {
         name: "o4-mini",
