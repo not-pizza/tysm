@@ -396,11 +396,23 @@ pub enum ChatError {
     #[error("JSON serialization error: {0}")]
     JsonSerializeError(serde_json::Error, ChatRequest),
 
-    /// The API returned a response could not be parsed into the structure expected of OpenAI responses
-    #[error("API returned a response could not be parsed into the structure expected of OpenAI responses: `{response}` (request: `{request}`)")]
-    ApiParseError {
+    /// The API did not return a JSON object.
+    #[error("API did not return a JSON object: {response} (request: {request})")]
+    ApiDidNotReturnJson {
         /// The response from the API.
         response: String,
+        /// The request that was sent to the API.
+        request: String,
+        /// The error that occurred when parsing the response.
+        #[source]
+        error: serde_json::Error,
+    },
+
+    /// The API returned a response could not be parsed into the structure expected of OpenAI responses
+    #[error("API returned a response could not be parsed into the structure expected of OpenAI responses: `{response:#}` (request: `{request}`)")]
+    ApiParseError {
+        /// The response from the API.
+        response: serde_json::Value,
         /// The error that occurred when parsing the response.
         #[source]
         error: serde_json::Error,
@@ -763,23 +775,38 @@ impl ChatClient {
         let chat_request_str = serde_json::to_string(&chat_request).unwrap();
 
         let process_result = |cached_response: String| -> Result<T, ChatError> {
-            let chat_response: ChatResponseOrError = serde_json::from_str(&cached_response)
-                .map_err(|e| {
-                    let chat_request_str = if chat_request_str.len() > 100 {
-                        chat_request_str
-                            .chars()
-                            .take(100)
-                            .chain("...".chars())
-                            .collect()
-                    } else {
-                        chat_request_str.clone()
-                    };
-                    ChatError::ApiParseError {
-                        response: cached_response.clone(),
-                        error: e,
+            let cached_response = match serde_json::from_str::<serde_json::Value>(&cached_response)
+            {
+                Ok(response) => response,
+                Err(error) => {
+                    return Err(ChatError::ApiDidNotReturnJson {
+                        response: cached_response,
                         request: chat_request_str,
+                        error,
+                    });
+                }
+            };
+
+            let chat_response: ChatResponseOrError =
+                match serde_json::from_value(cached_response.clone()) {
+                    Ok(response) => response,
+                    Err(error) => {
+                        let chat_request_str = if chat_request_str.len() > 100 {
+                            chat_request_str
+                                .chars()
+                                .take(100)
+                                .chain("...".chars())
+                                .collect()
+                        } else {
+                            chat_request_str.clone()
+                        };
+                        return Err(ChatError::ApiParseError {
+                            response: cached_response.clone(),
+                            error,
+                            request: chat_request_str,
+                        });
                     }
-                })?;
+                };
             let response = match chat_response {
                 ChatResponseOrError::Response(response) => response,
                 ChatResponseOrError::Error(error) => {
@@ -808,40 +835,42 @@ impl ChatClient {
             map_response(chat_response)
         };
 
-        let chat_response =
-            if let Some(cached_response) = self.chat_cached(&chat_request, process_result).await {
-                debug!("Using cached response");
-                cached_response?
-            } else {
-                let chat_response = self.chat_uncached(&chat_request).await?;
-                let result = process_result(chat_response.clone())?;
+        let chat_response = if let Some(cached_response) = self
+            .chat_cached(&chat_request, process_result.clone())
+            .await
+        {
+            debug!("Using cached response");
+            cached_response?
+        } else {
+            let chat_response = self.chat_uncached(&chat_request).await?;
+            let result = process_result(chat_response.clone())?;
 
-                // cache the response
-                {
-                    let chat_request_cache_key = chat_request.cache_key();
-                    let chat_request = serde_json::to_string(&chat_request)
-                        .map_err(|e| ChatError::JsonSerializeError(e, chat_request.clone()))?;
+            // cache the response
+            {
+                let chat_request_cache_key = chat_request.cache_key();
+                let chat_request = serde_json::to_string(&chat_request)
+                    .map_err(|e| ChatError::JsonSerializeError(e, chat_request.clone()))?;
 
-                    if let Some(cache_directory) = &self.cache_directory {
-                        if !cache_directory.exists() {
-                            tokio::fs::create_dir_all(&cache_directory).await?;
-                        }
-
-                        let cache_path = cache_directory.join(chat_request_cache_key);
-
-                        // Compress the response with zstd before writing to disk
-                        let compressed = zstd::encode_all(chat_response.as_bytes(), 3)?;
-                        tokio::fs::write(&cache_path, compressed).await?;
+                if let Some(cache_directory) = &self.cache_directory {
+                    if !cache_directory.exists() {
+                        tokio::fs::create_dir_all(&cache_directory).await?;
                     }
 
-                    self.lru
-                        .write()
-                        .ok()
-                        .unwrap()
-                        .put(chat_request, chat_response.clone());
+                    let cache_path = cache_directory.join(chat_request_cache_key);
+
+                    // Compress the response with zstd before writing to disk
+                    let compressed = zstd::encode_all(chat_response.as_bytes(), 3)?;
+                    tokio::fs::write(&cache_path, compressed).await?;
                 }
-                result
-            };
+
+                self.lru
+                    .write()
+                    .ok()
+                    .unwrap()
+                    .put(chat_request, chat_response.clone());
+            }
+            result
+        };
 
         Ok(chat_response)
     }
@@ -1083,7 +1112,7 @@ impl ChatClient {
     async fn chat_cached<T>(
         &self,
         chat_request: &ChatRequest,
-        map_response: impl Fn(String) -> Result<T, ChatError>,
+        map_response: impl FnOnce(String) -> Result<T, ChatError>,
     ) -> Option<Result<T, ChatError>> {
         let chat_request_cache_key = chat_request.cache_key();
         let chat_request = serde_json::to_string(chat_request).ok()?;

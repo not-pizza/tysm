@@ -102,7 +102,11 @@ mod tests {
 
     #[tokio::test]
     async fn it_works() {
-        let name: Name = CLIENT.chat("Who was the first president?").await.unwrap();
+        let name: Name = CLIENT
+            .chat("Who was the first president?")
+            .await
+            .map_err(|e| anyhow::anyhow!(e))
+            .unwrap();
 
         assert_eq!(name.first, "George");
         assert_eq!(name.last, "Washington");
