@@ -92,7 +92,7 @@ Each one has a corresponding batch equivalent (`batch_chat`, `batch_chat_with_sy
    ```
 3. Add `.env` to your `.gitignore` so you don't accidentally commit it.
 4. Add the crate and the necessary dependencies to your Rust project with:
-    1. `cargo add tysm serde schemars@1.0.0-alpha.17`. 
+    1. `cargo add tysm serde schemars`.
 
 
 ### Automatic Caching
@@ -240,5 +240,5 @@ note: required by a bound in `ChatClient::chat`
 You probably forgot to add the in-development version of Schemars to your project. Try replacing the `schemars` entry in your Cargo.toml with this:
 
 ```toml
-schemars = { version = "1.0.0-alpha.17", features = ["preserve_order"] }
+schemars = { version = "1", features = ["preserve_order"] }
 ```
