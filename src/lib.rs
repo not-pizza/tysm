@@ -6,7 +6,7 @@
 //!
 //! This library uses the [schemars](https://docs.rs/schemars/latest/schemars/index.html) crate to generate a schema for the desired response type. It also uses [serde](https://docs.rs/serde/latest/serde/index.html) to deserialize the response into the desired type. Install these crates like so:
 //!
-//! `cargo add tysm serde schemars@1.0.0-alpha.17`.
+//! `cargo add tysm serde schemars`.
 //!
 //! ## Usage
 //!
