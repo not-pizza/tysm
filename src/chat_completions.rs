@@ -767,7 +767,7 @@ impl ChatClient {
 
         let chat_request_str = serde_json::to_string(&chat_request).unwrap();
 
-        let process_result = |cached_response: String| -> Result<T, ChatError> {
+        let process_result = |cached_response: String| -> Result<(T, ChatUsage), ChatError> {
             let cached_response = match serde_json::from_str::<serde_json::Value>(&cached_response)
             {
                 Ok(response) => response,
@@ -825,7 +825,7 @@ impl ChatClient {
                 .content()
                 .map_err(IndividualChatError::Refusal)?;
 
-            map_response(chat_response)
+            map_response(chat_response).map(|mapped_response| (mapped_response, response.usage))
         };
 
         let chat_response = if let Some(cached_response) = self
@@ -833,10 +833,12 @@ impl ChatClient {
             .await
         {
             debug!("Using cached response");
-            cached_response?
+            let (result, _usage) = cached_response?;
+            result
         } else {
             let chat_response = self.chat_uncached(&chat_request).await?;
-            let result = process_result(chat_response.clone())?;
+            let (result, usage) = process_result(chat_response.clone())?;
+            *self.usage.write().unwrap() += usage;
 
             // cache the response
             {
