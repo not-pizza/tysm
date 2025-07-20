@@ -1,9 +1,14 @@
 //! Embeddings are a way to represent text in a vector space.
 //! This module provides a client for interacting with the OpenAI Embeddings API.
 
+use std::path::PathBuf;
+use std::sync::RwLock;
+
 use itertools::Itertools;
+use lru::LruCache;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use xxhash_rust::const_xxh3::xxh3_64 as const_xxh3;
 
 #[derive(Debug, Serialize, Clone)]
 struct EmbeddingsRequest<'a> {
@@ -11,6 +16,15 @@ struct EmbeddingsRequest<'a> {
     input: Vec<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     dimensions: Option<usize>,
+}
+
+impl EmbeddingsRequest<'_> {
+    fn cache_key(&self, url: &url::Url) -> String {
+        let key = format!("{} /:/ {}", serde_json::to_string(&self).unwrap(), url);
+        let key = key.as_bytes();
+        let id = const_xxh3(key);
+        format!("tysm-v1-embeddings_request-{}.zstd", id)
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -67,6 +81,10 @@ pub struct EmbeddingsClient {
     pub batch_size: usize,
     /// Some embedding models are trained using a technique that allows them to have their dimensionality lowered without the embedding losing its concept-representing properties. Of OpenAI's models, only text-embedding-3 and later models support this functionality.
     pub dimensions: Option<usize>,
+    /// A cache of the few responses. Stores the last 1024 responses by default.
+    pub lru: RwLock<LruCache<String, String>>,
+    /// The directory in which to cache responses to requests
+    pub cache_directory: Option<PathBuf>,
 }
 
 /// Errors that can occur when interacting with the ChatGPT API.
@@ -101,6 +119,10 @@ pub enum EmbeddingsError {
     /// The API did not return any choices.
     #[error("The wrong amount of embeddings was returned from API")]
     IncorrectNumberOfEmbeddings,
+
+    /// IO error (usually occurs when reading from the cache).
+    #[error("IO error")]
+    IoError(#[from] std::io::Error),
 }
 
 impl EmbeddingsClient {
@@ -113,6 +135,8 @@ impl EmbeddingsClient {
     /// let client = EmbeddingsClient::new("sk-1234567890", "text-embedding-ada-002");
     /// ```
     pub fn new(api_key: impl Into<String>, model: impl Into<String>) -> Self {
+        use std::num::NonZeroUsize;
+
         Self {
             api_key: api_key.into(),
             base_url: "https://api.openai.com/v1/".parse().unwrap(),
@@ -120,6 +144,8 @@ impl EmbeddingsClient {
             model: model.into(),
             batch_size: 500,
             dimensions: None,
+            lru: RwLock::new(LruCache::new(NonZeroUsize::new(1024).unwrap())),
+            cache_directory: None,
         }
     }
 
@@ -127,6 +153,20 @@ impl EmbeddingsClient {
     /// The default batch size is 500. If you have large documents, you may want to set the batch size to a lower value.
     pub fn with_batch_size(self, batch_size: usize) -> Self {
         Self { batch_size, ..self }
+    }
+
+    /// Set the cache directory for the client.
+    ///
+    /// The cache directory will be used to persistently cache all responses to requests.
+    pub fn with_cache_directory(mut self, cache_directory: impl Into<PathBuf>) -> Self {
+        let cache_directory = cache_directory.into();
+
+        if cache_directory.exists() && cache_directory.is_file() {
+            panic!("Cache directory is a file");
+        }
+
+        self.cache_directory = Some(cache_directory);
+        self
     }
 
     /// Sets the base URL
@@ -207,7 +247,6 @@ impl EmbeddingsClient {
         f: impl Fn(&'a T) -> S,
     ) -> Result<Vec<(&'a T, Vector)>, EmbeddingsError> {
         let documents_len = documents.len();
-        let client = Client::new();
         let mut all_embeddings = Vec::with_capacity(documents_len);
 
         // Process documents in batches
@@ -221,19 +260,21 @@ impl EmbeddingsClient {
             let documents_len = documents.len();
             let request = EmbeddingsRequest {
                 model: self.model.clone(),
-                input: documents,
+                input: documents.clone(),
                 dimensions: self.dimensions,
             };
 
-            let response = client
-                .post(self.embeddings_url())
-                .header("Authorization", format!("Bearer {}", self.api_key))
-                .header("Content-Type", "application/json")
-                .json(&request)
-                .send()
-                .await?;
+            // Check cache first
+            let response_text =
+                if let Some(cached_response) = self.embeddings_cached(&request).await {
+                    cached_response?
+                } else {
+                    let response_text = self.embeddings_uncached(&request).await?;
+                    self.cache_embeddings_response(&request, &response_text)
+                        .await?;
 
-            let response_text = response.text().await?;
+                    response_text
+                };
 
             let embeddings_response: EmbeddingsResponseOrError =
                 serde_json::from_str(&response_text).map_err(|e| {
@@ -271,6 +312,92 @@ impl EmbeddingsClient {
         }
 
         Ok(all_embeddings)
+    }
+
+    async fn embeddings_cached(
+        &self,
+        request: &EmbeddingsRequest<'_>,
+    ) -> Option<Result<String, EmbeddingsError>> {
+        let cache_key = request.cache_key(&self.embeddings_url());
+        let request_str = serde_json::to_string(request).ok()?;
+
+        // First, check the lru (which we just peek so it's not even really used as a LRU)
+        {
+            let lru = self.lru.read().ok()?;
+            let response = lru.peek(&request_str);
+            if let Some(response) = response {
+                return Some(Ok(response.clone()));
+            }
+        }
+
+        // Then, check the cache directory
+        let cache_directory = self.cache_directory.as_ref()?;
+        if !cache_directory.exists() {
+            panic!(
+                "Cache directory does not exist: {}",
+                cache_directory.display()
+            );
+        }
+        let cache_path = cache_directory.join(cache_key);
+
+        // Read the compressed data from disk
+        let compressed_data = tokio::fs::read(&cache_path).await.ok()?;
+
+        // Decompress the data
+        let decompressed_data = zstd::decode_all(compressed_data.as_slice()).ok()?;
+
+        // Convert bytes back to string
+        let response = String::from_utf8(decompressed_data).ok()?;
+
+        Some(Ok(response))
+    }
+
+    async fn embeddings_uncached(
+        &self,
+        request: &EmbeddingsRequest<'_>,
+    ) -> Result<String, EmbeddingsError> {
+        let client = Client::new();
+
+        let response = client
+            .post(self.embeddings_url())
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("Content-Type", "application/json")
+            .json(request)
+            .send()
+            .await?
+            .text()
+            .await?;
+
+        Ok(response)
+    }
+
+    async fn cache_embeddings_response(
+        &self,
+        request: &EmbeddingsRequest<'_>,
+        response: &str,
+    ) -> Result<(), EmbeddingsError> {
+        let cache_key = request.cache_key(&self.embeddings_url());
+        let request_str = serde_json::to_string(request).unwrap();
+
+        if let Some(cache_directory) = &self.cache_directory {
+            if !cache_directory.exists() {
+                tokio::fs::create_dir_all(&cache_directory).await?;
+            }
+
+            let cache_path = cache_directory.join(cache_key);
+
+            // Compress the response with zstd before writing to disk
+            let compressed = zstd::encode_all(response.as_bytes(), 3)?;
+            tokio::fs::write(&cache_path, compressed).await?;
+        }
+
+        self.lru
+            .write()
+            .ok()
+            .unwrap()
+            .put(request_str, response.to_string());
+
+        Ok(())
     }
 }
 
