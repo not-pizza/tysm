@@ -266,21 +266,19 @@ impl EmbeddingsClient {
             // Calculate hash of the document's debug representation
             let debug_repr = format!("{:?}", doc);
             let hash = const_xxh3(debug_repr.as_bytes());
-            
+
             // Check if we should start a new chunk (1/256 chance or chunk is full)
             let should_split = (hash % 256) == 0 && !current_chunk.is_empty();
             let chunk_full = current_chunk.len() >= self.batch_size;
-            
-            if should_split || chunk_full {
-                if !current_chunk.is_empty() {
-                    chunks.push(current_chunk);
-                    current_chunk = Vec::new();
-                }
+
+            if (should_split || chunk_full) && !current_chunk.is_empty() {
+                chunks.push(current_chunk);
+                current_chunk = Vec::new();
             }
-            
+
             current_chunk.push((*idx, *doc, doc_str.as_str()));
         }
-        
+
         // Don't forget the last chunk
         if !current_chunk.is_empty() {
             chunks.push(current_chunk);
@@ -290,7 +288,7 @@ impl EmbeddingsClient {
         for chunk in chunks {
             let documents_len = chunk.len();
             let input_docs: Vec<&str> = chunk.iter().map(|(_, _, s)| *s).collect();
-            
+
             let request = EmbeddingsRequest {
                 model: self.model.clone(),
                 input: input_docs,
@@ -337,18 +335,27 @@ impl EmbeddingsClient {
             }
 
             // Store embeddings with their original indices
-            for ((original_idx, doc, _), embedding) in chunk.into_iter().zip(embeddings_response.data) {
-                all_embeddings.push((original_idx, doc, Vector {
-                    elements: embedding.embedding,
-                }));
+            for ((original_idx, doc, _), embedding) in
+                chunk.into_iter().zip(embeddings_response.data)
+            {
+                all_embeddings.push((
+                    original_idx,
+                    doc,
+                    Vector {
+                        elements: embedding.embedding,
+                    },
+                ));
             }
         }
 
         // Sort by original index to maintain input order
         all_embeddings.sort_by_key(|(idx, _, _)| *idx);
-        
+
         // Return documents with their embeddings in original order
-        Ok(all_embeddings.into_iter().map(|(_, doc, vec)| (doc, vec)).collect())
+        Ok(all_embeddings
+            .into_iter()
+            .map(|(_, doc, vec)| (doc, vec))
+            .collect())
     }
 
     async fn embeddings_cached(

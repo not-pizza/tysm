@@ -1225,5 +1225,5 @@ fn test_deser() {
     }
 }
 "#;
-    let _chat_response: ChatResponse = serde_json::from_str(&s).unwrap();
+    let _chat_response: ChatResponse = serde_json::from_str(s).unwrap();
 }
