@@ -4,7 +4,6 @@
 use std::path::PathBuf;
 use std::sync::RwLock;
 
-use itertools::Itertools;
 use lru::LruCache;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -241,7 +240,7 @@ impl EmbeddingsClient {
     /// Embed documents into vector space. A function can be provided to map the documents to strings.
     ///
     /// Documents are processed in batches to stay within API limits.
-    pub async fn embed_fn<'a, T, S: AsRef<str>>(
+    pub async fn embed_fn<'a, T: Ord + std::fmt::Debug, S: AsRef<str>>(
         &self,
         documents: &'a [T],
         f: impl Fn(&'a T) -> S,
@@ -249,18 +248,52 @@ impl EmbeddingsClient {
         let documents_len = documents.len();
         let mut all_embeddings = Vec::with_capacity(documents_len);
 
-        // Process documents in batches
-        let documents = documents.iter().map(|t| (t, f(t))).collect::<Vec<_>>();
-        let documents = documents
+        // Create indexed documents with their string representations
+        let mut indexed_documents: Vec<(usize, &'a T, String)> = documents
             .iter()
-            .map(|(t, s)| (t, s.as_ref()))
-            .chunks(self.batch_size);
-        for chunk in &documents {
-            let (data, documents) = chunk.into_iter().unzip::<_, _, Vec<_>, Vec<_>>();
-            let documents_len = documents.len();
+            .enumerate()
+            .map(|(idx, doc)| (idx, doc, f(doc).as_ref().to_string()))
+            .collect();
+
+        // Sort by the document content for stable caching
+        indexed_documents.sort_by(|a, b| a.2.cmp(&b.2));
+
+        // Create smart chunks based on document hashes
+        let mut chunks: Vec<Vec<(usize, &'a T, &str)>> = Vec::new();
+        let mut current_chunk: Vec<(usize, &'a T, &str)> = Vec::new();
+
+        for (idx, doc, doc_str) in indexed_documents.iter() {
+            // Calculate hash of the document's debug representation
+            let debug_repr = format!("{:?}", doc);
+            let hash = const_xxh3(debug_repr.as_bytes());
+            
+            // Check if we should start a new chunk (1/256 chance or chunk is full)
+            let should_split = (hash % 256) == 0 && !current_chunk.is_empty();
+            let chunk_full = current_chunk.len() >= self.batch_size;
+            
+            if should_split || chunk_full {
+                if !current_chunk.is_empty() {
+                    chunks.push(current_chunk);
+                    current_chunk = Vec::new();
+                }
+            }
+            
+            current_chunk.push((*idx, *doc, doc_str.as_str()));
+        }
+        
+        // Don't forget the last chunk
+        if !current_chunk.is_empty() {
+            chunks.push(current_chunk);
+        }
+
+        // Process each chunk
+        for chunk in chunks {
+            let documents_len = chunk.len();
+            let input_docs: Vec<&str> = chunk.iter().map(|(_, _, s)| *s).collect();
+            
             let request = EmbeddingsRequest {
                 model: self.model.clone(),
-                input: documents.clone(),
+                input: input_docs,
                 dimensions: self.dimensions,
             };
 
@@ -303,15 +336,19 @@ impl EmbeddingsClient {
                 return Err(EmbeddingsError::IncorrectNumberOfEmbeddings);
             }
 
-            all_embeddings.extend(
-                data.into_iter()
-                    .zip(embeddings_response.data.into_iter().map(|e| Vector {
-                        elements: e.embedding,
-                    })),
-            );
+            // Store embeddings with their original indices
+            for ((original_idx, doc, _), embedding) in chunk.into_iter().zip(embeddings_response.data) {
+                all_embeddings.push((original_idx, doc, Vector {
+                    elements: embedding.embedding,
+                }));
+            }
         }
 
-        Ok(all_embeddings)
+        // Sort by original index to maintain input order
+        all_embeddings.sort_by_key(|(idx, _, _)| *idx);
+        
+        // Return documents with their embeddings in original order
+        Ok(all_embeddings.into_iter().map(|(_, doc, vec)| (doc, vec)).collect())
     }
 
     async fn embeddings_cached(
