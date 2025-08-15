@@ -15,6 +15,11 @@ struct EmbeddingsRequest<'a> {
     input: Vec<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     dimensions: Option<usize>,
+
+    /// Extra fields to be included in the request body
+    #[serde(flatten)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extra_body: Option<serde_json::Value>,
 }
 
 impl EmbeddingsRequest<'_> {
@@ -84,6 +89,9 @@ pub struct EmbeddingsClient {
     pub lru: RwLock<LruCache<String, String>>,
     /// The directory in which to cache responses to requests
     pub cache_directory: Option<PathBuf>,
+
+    /// Extra body to be provided when making requests
+    pub extra_body: Option<serde_json::Value>,
 }
 
 /// Errors that can occur when interacting with the ChatGPT API.
@@ -145,6 +153,7 @@ impl EmbeddingsClient {
             dimensions: None,
             lru: RwLock::new(LruCache::new(NonZeroUsize::new(1024).unwrap())),
             cache_directory: None,
+            extra_body: None,
         }
     }
 
@@ -202,6 +211,12 @@ impl EmbeddingsClient {
             dimensions: Some(dimensions),
             ..self
         }
+    }
+
+    /// Set extra fields to be included in the request body
+    pub fn with_extra_body(mut self, extra_body: serde_json::Value) -> Self {
+        self.extra_body = Some(extra_body);
+        self
     }
 
     fn embeddings_url(&self) -> url::Url {
@@ -293,6 +308,7 @@ impl EmbeddingsClient {
                 model: self.model.clone(),
                 input: input_docs,
                 dimensions: self.dimensions,
+                extra_body: self.extra_body.clone(),
             };
 
             // Check cache first
