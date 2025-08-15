@@ -50,6 +50,9 @@ pub struct ChatClient {
     pub usage: RwLock<ChatUsage>,
     /// The directory in which to cache responses to requests
     pub cache_directory: Option<PathBuf>,
+
+    /// Extra body to be provided when making requests
+    pub extra_body: Option<serde_json::Value>,
 }
 
 /// The role of a message.
@@ -162,6 +165,11 @@ pub struct ChatRequest {
     pub messages: Vec<ChatMessage>,
     /// The response format to use for the ChatGPT API.
     pub response_format: ResponseFormat,
+
+    /// Extra fields to be included in the request body
+    #[serde(flatten)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extra_body: Option<serde_json::Value>,
 }
 
 impl ChatRequest {
@@ -531,6 +539,7 @@ impl ChatClient {
             lru: RwLock::new(LruCache::new(NonZeroUsize::new(1024).unwrap())),
             usage: RwLock::new(ChatUsage::default()),
             cache_directory: None,
+            extra_body: None,
         }
     }
 
@@ -545,6 +554,12 @@ impl ChatClient {
         }
 
         self.cache_directory = Some(cache_directory);
+        self
+    }
+
+    /// Set extra fields to be included in the request body
+    pub fn with_extra_body(mut self, extra_body: serde_json::Value) -> Self {
+        self.extra_body = Some(extra_body);
         self
     }
 
@@ -763,6 +778,7 @@ impl ChatClient {
             model: self.model.clone(),
             messages,
             response_format,
+            extra_body: self.extra_body.clone(),
         };
 
         let chat_request_str = serde_json::to_string(&chat_request).unwrap();
@@ -974,6 +990,7 @@ impl ChatClient {
                                 model: self.model.clone(),
                                 messages,
                                 response_format,
+                                extra_body: self.extra_body.clone(),
                             },
                         ),
                     ),

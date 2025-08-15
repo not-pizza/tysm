@@ -24,6 +24,7 @@ async fn main() -> anyhow::Result<()> {
                     ChatMessage::user("What is the capital of France?"),
                 ],
                 response_format: ResponseFormat::Text,
+                extra_body: None,
             },
         ),
         BatchRequestItem::new_chat(
@@ -35,6 +36,7 @@ async fn main() -> anyhow::Result<()> {
                     ChatMessage::user("What is the capital of Japan?"),
                 ],
                 response_format: ResponseFormat::Text,
+                extra_body: None,
             },
         ),
         BatchRequestItem::new_chat(
@@ -46,6 +48,7 @@ async fn main() -> anyhow::Result<()> {
                     ChatMessage::user("What is the capital of Italy?"),
                 ],
                 response_format: ResponseFormat::Text,
+                extra_body: None,
             },
         ),
     ];
