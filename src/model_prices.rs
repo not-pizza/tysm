@@ -39,6 +39,12 @@ pub(crate) const CHAT_COMPLETIONS: &[ModelCost] = &[
         output: 75.0,
     },
     ModelCost {
+        name: "claude-opus-4.1",
+        input: 15.0,
+        cached_input: Some(1.50),
+        output: 75.0,
+    },
+    ModelCost {
         name: "claude-sonnet-4",
         input: 3.0,
         cached_input: None,
@@ -165,6 +171,25 @@ pub(crate) const CHAT_COMPLETIONS: &[ModelCost] = &[
         input: 3.00,
         cached_input: None,
         output: 12.00,
+    },
+    // GPT-5 models
+    ModelCost {
+        name: "gpt-5",
+        input: 1.250,
+        cached_input: Some(0.125),
+        output: 10.00,
+    },
+    ModelCost {
+        name: "gpt-5-mini",
+        input: 0.250,
+        cached_input: Some(0.025),
+        output: 2.00,
+    },
+    ModelCost {
+        name: "gpt-5-nano",
+        input: 0.050,
+        cached_input: Some(0.005),
+        output: 0.40,
     },
 ];
 
