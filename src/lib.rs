@@ -179,4 +179,69 @@ Caused by:
         assert_eq!(name.last, "Holland");
         assert_eq!(name.age_of_death, None);
     }
+
+    #[derive(serde::Deserialize, schemars::JsonSchema, Debug)]
+    struct PersonDetails {
+        name: String,
+        nickname: Option<String>,
+        birth_year: u16,
+        death_year: Option<u16>,
+        #[expect(unused)]
+        occupation: String,
+        famous_quote: Option<String>,
+    }
+
+    #[tokio::test]
+    async fn multiple_optional_fields() {
+        // Test with a deceased person (should have some optional fields filled)
+        let person: PersonDetails = CLIENT.chat("Tell me about Abraham Lincoln").await.unwrap();
+
+        assert_eq!(person.name, "Abraham Lincoln");
+        assert!(person.nickname.is_some()); // "Honest Abe"
+        assert_eq!(person.birth_year, 1809);
+        assert_eq!(person.death_year, Some(1865));
+        assert!(person.famous_quote.is_some());
+
+        // Test with a living person (should have None for death_year)
+        let person: PersonDetails = CLIENT.chat("Tell me about Elon Musk").await.unwrap();
+
+        assert_eq!(person.name, "Elon Musk");
+        assert_eq!(person.death_year, None);
+        assert!(person.birth_year > 1900);
+    }
+
+    #[derive(serde::Deserialize, schemars::JsonSchema, Debug)]
+    struct BookInfo {
+        title: String,
+        author: String,
+        publication_year: u16,
+        sequel_title: Option<String>,
+        movie_adaptation: Option<String>,
+    }
+
+    #[tokio::test]
+    async fn optional_fields_varying_presence() {
+        // Test with a book that has both sequel and movie
+        let book: BookInfo = CLIENT
+            .chat("Tell me about the book The Hunger Games")
+            .await
+            .unwrap();
+
+        assert_eq!(book.title, "The Hunger Games");
+        assert_eq!(book.author, "Suzanne Collins");
+        assert_eq!(book.publication_year, 2008);
+        assert!(book.sequel_title.is_some()); // "Catching Fire"
+        assert!(book.movie_adaptation.is_some());
+
+        // Test with a book that has no sequel or movie
+        let book: BookInfo = CLIENT
+            .chat("Tell me about the book 'Meditations' by Marcus Aurelius")
+            .await
+            .unwrap();
+
+        assert_eq!(book.title, "Meditations");
+        assert_eq!(book.author, "Marcus Aurelius");
+        assert_eq!(book.sequel_title, None);
+        // Movie adaptation might be Some or None depending on the model's knowledge
+    }
 }
