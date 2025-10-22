@@ -194,10 +194,7 @@ Caused by:
     #[tokio::test]
     async fn multiple_optional_fields() {
         // Test with a deceased person (should have some optional fields filled)
-        let person: PersonDetails = CLIENT
-            .chat("Tell me about Abraham Lincoln")
-            .await
-            .unwrap();
+        let person: PersonDetails = CLIENT.chat("Tell me about Abraham Lincoln").await.unwrap();
 
         assert_eq!(person.name, "Abraham Lincoln");
         assert!(person.nickname.is_some()); // "Honest Abe"
@@ -206,10 +203,7 @@ Caused by:
         assert!(person.famous_quote.is_some());
 
         // Test with a living person (should have None for death_year)
-        let person: PersonDetails = CLIENT
-            .chat("Tell me about Elon Musk")
-            .await
-            .unwrap();
+        let person: PersonDetails = CLIENT.chat("Tell me about Elon Musk").await.unwrap();
 
         assert_eq!(person.name, "Elon Musk");
         assert_eq!(person.death_year, None);

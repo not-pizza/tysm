@@ -51,6 +51,9 @@ pub struct ChatClient {
     /// The directory in which to cache responses to requests
     pub cache_directory: Option<PathBuf>,
 
+    /// The service tier to use for requests (e.g., "flex")
+    pub service_tier: Option<String>,
+
     /// Extra body to be provided when making requests
     pub extra_body: Option<serde_json::Value>,
 }
@@ -166,6 +169,10 @@ pub struct ChatRequest {
     /// The response format to use for the ChatGPT API.
     pub response_format: ResponseFormat,
 
+    /// The service tier to use for the request (e.g., "flex")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_tier: Option<String>,
+
     /// Extra fields to be included in the request body
     #[serde(flatten)]
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -174,7 +181,12 @@ pub struct ChatRequest {
 
 impl ChatRequest {
     fn cache_key(&self) -> String {
-        let serialized = serde_json::to_string(&self).unwrap();
+        // Create a version of the request without service_tier for caching
+        // This ensures requests with different service tiers share the same cache
+        let mut cacheable = self.clone();
+        cacheable.service_tier = None;
+
+        let serialized = serde_json::to_string(&cacheable).unwrap();
         let id = const_xxh3(serialized.as_bytes());
         format!("tysm-v1-chat_request-{}.zstd", id)
     }
@@ -539,6 +551,7 @@ impl ChatClient {
             lru: RwLock::new(LruCache::new(NonZeroUsize::new(1024).unwrap())),
             usage: RwLock::new(ChatUsage::default()),
             cache_directory: None,
+            service_tier: None,
             extra_body: None,
         }
     }
@@ -554,6 +567,12 @@ impl ChatClient {
         }
 
         self.cache_directory = Some(cache_directory);
+        self
+    }
+
+    /// Set the service tier for requests (e.g., "flex")
+    pub fn with_service_tier(mut self, service_tier: impl Into<String>) -> Self {
+        self.service_tier = Some(service_tier.into());
         self
     }
 
@@ -778,6 +797,7 @@ impl ChatClient {
             model: self.model.clone(),
             messages,
             response_format,
+            service_tier: self.service_tier.clone(),
             extra_body: self.extra_body.clone(),
         };
 
@@ -990,6 +1010,7 @@ impl ChatClient {
                                 model: self.model.clone(),
                                 messages,
                                 response_format,
+                                service_tier: self.service_tier.clone(),
                                 extra_body: self.extra_body.clone(),
                             },
                         ),
@@ -1243,4 +1264,38 @@ fn test_deser() {
 }
 "#;
     let _chat_response: ChatResponse = serde_json::from_str(s).unwrap();
+}
+
+#[test]
+fn service_tier_excluded_from_cache_key() {
+    // Create two identical requests except for service_tier
+    let request1 = ChatRequest {
+        model: "gpt-4o".to_string(),
+        messages: vec![ChatMessage::user("test")],
+        response_format: ResponseFormat::Text,
+        service_tier: None,
+        extra_body: None,
+    };
+
+    let request2 = ChatRequest {
+        model: "gpt-4o".to_string(),
+        messages: vec![ChatMessage::user("test")],
+        response_format: ResponseFormat::Text,
+        service_tier: Some("flex".to_string()),
+        extra_body: None,
+    };
+
+    // The cache keys should be identical even though service_tier differs
+    assert_eq!(request1.cache_key(), request2.cache_key());
+
+    // Verify that different messages produce different cache keys
+    let request3 = ChatRequest {
+        model: "gpt-4o".to_string(),
+        messages: vec![ChatMessage::user("different message")],
+        response_format: ResponseFormat::Text,
+        service_tier: Some("flex".to_string()),
+        extra_body: None,
+    };
+
+    assert_ne!(request1.cache_key(), request3.cache_key());
 }
