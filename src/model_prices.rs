@@ -196,7 +196,8 @@ pub(crate) const CHAT_COMPLETIONS: &[ModelCost] = &[
 pub(crate) fn cost(model: &str, usage: crate::chat_completions::ChatUsage) -> Option<f64> {
     let model_cost = CHAT_COMPLETIONS
         .iter()
-        .find(|mc| model.starts_with(mc.name))?;
+        .filter(|mc| model.starts_with(mc.name))
+        .max_by_key(|mc| mc.name.len())?;
     let (cached_prompt_tokens, uncached_prompt_tokens) =
         if let Some(details) = usage.prompt_token_details {
             (
