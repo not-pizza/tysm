@@ -7,7 +7,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::RwLock;
 
-use lru::LruCache;
+use dashmap::DashMap;
 use reqwest::Client;
 use schemars::{schema_for, transform::Transform, JsonSchema, Schema};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -44,8 +44,8 @@ pub struct ChatClient {
     pub chat_completions_path: String,
     /// The model to use for the ChatGPT API.
     pub model: String,
-    /// A cache of the few responses. Stores the last 1024 responses by default.
-    pub lru: RwLock<LruCache<String, String>>,
+    /// A cache of recent responses.
+    pub lru: DashMap<String, String>,
     /// This client's token consumption (as reported by the API). Batch requests will not affect `usage`.
     pub usage: RwLock<ChatUsage>,
     /// The directory in which to cache responses to requests
@@ -541,14 +541,12 @@ impl ChatClient {
     /// let client = ChatClient::new("sk-1234567890", "gpt-4o");
     /// ```
     pub fn new(api_key: impl Into<String>, model: impl Into<String>) -> Self {
-        use std::num::NonZeroUsize;
-
         Self {
             api_key: api_key.into(),
             base_url: url::Url::parse("https://api.openai.com/v1/").unwrap(),
             chat_completions_path: "chat/completions".to_string(),
             model: model.into(),
-            lru: RwLock::new(LruCache::new(NonZeroUsize::new(1024).unwrap())),
+            lru: DashMap::new(),
             usage: RwLock::new(ChatUsage::default()),
             cache_directory: None,
             service_tier: None,
@@ -656,7 +654,7 @@ impl ChatClient {
     /// # })
     /// ```
     ///
-    /// The last 1024 Responses are cached in the client, so sending the same request twice
+    /// Responses are cached in the client, so sending the same request twice
     /// will return the same response.
     ///
     /// **Important:** The response type must implement the `JsonSchema` trait
@@ -894,11 +892,7 @@ impl ChatClient {
                     tokio::fs::write(&cache_path, compressed).await?;
                 }
 
-                self.lru
-                    .write()
-                    .ok()
-                    .unwrap()
-                    .put(chat_request, chat_response.clone());
+                self.lru.insert(chat_request, chat_response.clone());
             }
             result
         };
@@ -1150,13 +1144,9 @@ impl ChatClient {
         let chat_request_cache_key = chat_request.cache_key();
         let chat_request = serde_json::to_string(chat_request).ok()?;
 
-        // First, check the lru (which we just peek so it's not even really used as a LRU)
-        {
-            let lru = self.lru.read().ok()?;
-            let response = lru.peek(&chat_request);
-            if let Some(response) = response {
-                return Some(map_response(response.clone()));
-            }
+        // First, check the cache
+        if let Some(response) = self.lru.get(&chat_request) {
+            return Some(map_response(response.clone()));
         }
 
         // Then, check the cache directory
