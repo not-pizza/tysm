@@ -15,19 +15,13 @@ pub(crate) struct ModelCost {
 pub(crate) const CHAT_COMPLETIONS: &[ModelCost] = &[
     // Anthropic
     ModelCost {
-        name: "claude-3-7-sonnet",
-        input: 3.0,
+        name: "claude-opus-4.5",
+        input: 5.0,
         cached_input: None,
-        output: 15.0,
+        output: 25.0,
     },
     ModelCost {
-        name: "claude-3-5-haiku",
-        input: 0.80,
-        cached_input: None,
-        output: 4.0,
-    },
-    ModelCost {
-        name: "claude-3-opus",
+        name: "claude-opus-4.1",
         input: 15.0,
         cached_input: None,
         output: 75.0,
@@ -39,10 +33,10 @@ pub(crate) const CHAT_COMPLETIONS: &[ModelCost] = &[
         output: 75.0,
     },
     ModelCost {
-        name: "claude-opus-4.1",
-        input: 15.0,
-        cached_input: Some(1.50),
-        output: 75.0,
+        name: "claude-sonnet-4.5",
+        input: 3.0,
+        cached_input: None,
+        output: 15.0,
     },
     ModelCost {
         name: "claude-sonnet-4",
@@ -52,6 +46,24 @@ pub(crate) const CHAT_COMPLETIONS: &[ModelCost] = &[
     },
     ModelCost {
         name: "claude-haiku-4",
+        input: 0.80,
+        cached_input: None,
+        output: 4.0,
+    },
+    ModelCost {
+        name: "claude-3-opus",
+        input: 15.0,
+        cached_input: None,
+        output: 75.0,
+    },
+    ModelCost {
+        name: "claude-3-7-sonnet",
+        input: 3.0,
+        cached_input: None,
+        output: 15.0,
+    },
+    ModelCost {
+        name: "claude-3-5-haiku",
         input: 0.80,
         cached_input: None,
         output: 4.0,
@@ -174,22 +186,82 @@ pub(crate) const CHAT_COMPLETIONS: &[ModelCost] = &[
     },
     // GPT-5 models
     ModelCost {
-        name: "gpt-5",
-        input: 1.250,
+        name: "gpt-5.2-chat-latest",
+        input: 1.75,
+        cached_input: Some(0.175),
+        output: 14.00,
+    },
+    ModelCost {
+        name: "gpt-5.2-pro",
+        input: 21.00,
+        cached_input: None,
+        output: 168.00,
+    },
+    ModelCost {
+        name: "gpt-5.2",
+        input: 1.75,
+        cached_input: Some(0.175),
+        output: 14.00,
+    },
+    ModelCost {
+        name: "gpt-5.1-chat-latest",
+        input: 1.25,
         cached_input: Some(0.125),
         output: 10.00,
     },
     ModelCost {
+        name: "gpt-5.1-codex-max",
+        input: 1.25,
+        cached_input: Some(0.125),
+        output: 10.00,
+    },
+    ModelCost {
+        name: "gpt-5.1-codex",
+        input: 1.25,
+        cached_input: Some(0.125),
+        output: 10.00,
+    },
+    ModelCost {
+        name: "gpt-5.1",
+        input: 1.25,
+        cached_input: Some(0.125),
+        output: 10.00,
+    },
+    ModelCost {
+        name: "gpt-5-chat-latest",
+        input: 1.25,
+        cached_input: Some(0.125),
+        output: 10.00,
+    },
+    ModelCost {
+        name: "gpt-5-codex",
+        input: 1.25,
+        cached_input: Some(0.125),
+        output: 10.00,
+    },
+    ModelCost {
+        name: "gpt-5-pro",
+        input: 15.00,
+        cached_input: None,
+        output: 120.00,
+    },
+    ModelCost {
         name: "gpt-5-mini",
-        input: 0.250,
+        input: 0.25,
         cached_input: Some(0.025),
         output: 2.00,
     },
     ModelCost {
         name: "gpt-5-nano",
-        input: 0.050,
+        input: 0.05,
         cached_input: Some(0.005),
         output: 0.40,
+    },
+    ModelCost {
+        name: "gpt-5",
+        input: 1.25,
+        cached_input: Some(0.125),
+        output: 10.00,
     },
 ];
 

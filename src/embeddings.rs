@@ -90,6 +90,9 @@ pub struct EmbeddingsClient {
     /// The directory in which to cache responses to requests
     pub cache_directory: Option<PathBuf>,
 
+    /// The backup cache directory to check if a file is not found in the main cache directory
+    pub backup_cache_directory: Option<PathBuf>,
+
     /// Extra body to be provided when making requests
     pub extra_body: Option<serde_json::Value>,
 }
@@ -153,6 +156,7 @@ impl EmbeddingsClient {
             dimensions: None,
             lru: RwLock::new(LruCache::new(NonZeroUsize::new(1024).unwrap())),
             cache_directory: None,
+            backup_cache_directory: None,
             extra_body: None,
         }
     }
@@ -174,6 +178,21 @@ impl EmbeddingsClient {
         }
 
         self.cache_directory = Some(cache_directory);
+        self
+    }
+
+    /// Set the backup cache directory for the client.
+    ///
+    /// If a cached file is not found in the main cache directory, the backup cache directory
+    /// will be checked. If found there, the file will be moved to the main cache directory.
+    pub fn with_backup_cache_directory(mut self, backup_cache_directory: impl Into<PathBuf>) -> Self {
+        let backup_cache_directory = backup_cache_directory.into();
+
+        if backup_cache_directory.exists() && backup_cache_directory.is_file() {
+            panic!("Backup cache directory is a file");
+        }
+
+        self.backup_cache_directory = Some(backup_cache_directory);
         self
     }
 
@@ -398,10 +417,34 @@ impl EmbeddingsClient {
                 cache_directory.display()
             );
         }
-        let cache_path = cache_directory.join(cache_key);
+        let cache_path = cache_directory.join(&cache_key);
 
         // Read the compressed data from disk
-        let compressed_data = tokio::fs::read(&cache_path).await.ok()?;
+        let compressed_data = match tokio::fs::read(&cache_path).await.ok() {
+            Some(data) => data,
+            None => {
+                // If not found in main cache, check backup cache directory
+                if let Some(backup_cache_directory) = &self.backup_cache_directory {
+                    if backup_cache_directory.exists() {
+                        let backup_cache_path = backup_cache_directory.join(&cache_key);
+                        if let Ok(data) = tokio::fs::read(&backup_cache_path).await {
+                            // Found in backup cache, move it to main cache
+                            if !cache_directory.exists() {
+                                let _ = tokio::fs::create_dir_all(&cache_directory).await;
+                            }
+                            let _ = tokio::fs::rename(&backup_cache_path, &cache_path).await;
+                            data
+                        } else {
+                            return None;
+                        }
+                    } else {
+                        return None;
+                    }
+                } else {
+                    return None;
+                }
+            }
+        };
 
         // Decompress the data
         let decompressed_data = zstd::decode_all(compressed_data.as_slice()).ok()?;

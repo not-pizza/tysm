@@ -51,8 +51,14 @@ pub struct ChatClient {
     /// The directory in which to cache responses to requests
     pub cache_directory: Option<PathBuf>,
 
+    /// The backup cache directory to check if a file is not found in the main cache directory
+    pub backup_cache_directory: Option<PathBuf>,
+
     /// The service tier to use for requests (e.g., "flex")
     pub service_tier: Option<String>,
+
+    /// The reasoning effort to use for requests (e.g., "low", "medium", "high")
+    pub reasoning_effort: Option<String>,
 
     /// Extra body to be provided when making requests
     pub extra_body: Option<serde_json::Value>,
@@ -173,6 +179,10 @@ pub struct ChatRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub service_tier: Option<String>,
 
+    /// The reasoning effort to use for the request (e.g., "low", "medium", "high")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
+
     /// Extra fields to be included in the request body
     #[serde(flatten)]
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -183,6 +193,7 @@ impl ChatRequest {
     fn cache_key(&self) -> String {
         // Create a version of the request without service_tier for caching
         // This ensures requests with different service tiers share the same cache
+        // Note: reasoning_effort IS included in the cache key since it affects output
         let mut cacheable = self.clone();
         cacheable.service_tier = None;
 
@@ -549,7 +560,9 @@ impl ChatClient {
             lru: DashMap::new(),
             usage: RwLock::new(ChatUsage::default()),
             cache_directory: None,
+            backup_cache_directory: None,
             service_tier: None,
+            reasoning_effort: None,
             extra_body: None,
         }
     }
@@ -568,9 +581,30 @@ impl ChatClient {
         self
     }
 
+    /// Set the backup cache directory for the client.
+    ///
+    /// If a cached file is not found in the main cache directory, the backup cache directory
+    /// will be checked. If found there, the file will be moved to the main cache directory.
+    pub fn with_backup_cache_directory(mut self, backup_cache_directory: impl Into<PathBuf>) -> Self {
+        let backup_cache_directory = backup_cache_directory.into();
+
+        if backup_cache_directory.exists() && backup_cache_directory.is_file() {
+            panic!("Backup cache directory is a file");
+        }
+
+        self.backup_cache_directory = Some(backup_cache_directory);
+        self
+    }
+
     /// Set the service tier for requests (e.g., "flex")
     pub fn with_service_tier(mut self, service_tier: impl Into<String>) -> Self {
         self.service_tier = Some(service_tier.into());
+        self
+    }
+
+    /// Set the reasoning effort for requests (e.g., "low", "medium", "high")
+    pub fn with_reasoning_effort(mut self, reasoning_effort: impl Into<String>) -> Self {
+        self.reasoning_effort = Some(reasoning_effort.into());
         self
     }
 
@@ -796,6 +830,7 @@ impl ChatClient {
             messages,
             response_format,
             service_tier: self.service_tier.clone(),
+            reasoning_effort: self.reasoning_effort.clone(),
             extra_body: self.extra_body.clone(),
         };
 
@@ -1005,6 +1040,7 @@ impl ChatClient {
                                 messages,
                                 response_format,
                                 service_tier: self.service_tier.clone(),
+                                reasoning_effort: self.reasoning_effort.clone(),
                                 extra_body: self.extra_body.clone(),
                             },
                         ),
@@ -1157,10 +1193,34 @@ impl ChatClient {
                 cache_directory.display()
             );
         }
-        let cache_path = cache_directory.join(chat_request_cache_key);
+        let cache_path = cache_directory.join(&chat_request_cache_key);
 
         // Read the compressed data from disk
-        let compressed_data = tokio::fs::read(&cache_path).await.ok()?;
+        let compressed_data = match tokio::fs::read(&cache_path).await.ok() {
+            Some(data) => data,
+            None => {
+                // If not found in main cache, check backup cache directory
+                if let Some(backup_cache_directory) = &self.backup_cache_directory {
+                    if backup_cache_directory.exists() {
+                        let backup_cache_path = backup_cache_directory.join(&chat_request_cache_key);
+                        if let Ok(data) = tokio::fs::read(&backup_cache_path).await {
+                            // Found in backup cache, move it to main cache
+                            if !cache_directory.exists() {
+                                let _ = tokio::fs::create_dir_all(&cache_directory).await;
+                            }
+                            let _ = tokio::fs::rename(&backup_cache_path, &cache_path).await;
+                            data
+                        } else {
+                            return None;
+                        }
+                    } else {
+                        return None;
+                    }
+                } else {
+                    return None;
+                }
+            }
+        };
 
         // Decompress the data
         let decompressed_data = zstd::decode_all(compressed_data.as_slice()).ok()?;
@@ -1264,6 +1324,7 @@ fn service_tier_excluded_from_cache_key() {
         messages: vec![ChatMessage::user("test")],
         response_format: ResponseFormat::Text,
         service_tier: None,
+        reasoning_effort: None,
         extra_body: None,
     };
 
@@ -1272,20 +1333,34 @@ fn service_tier_excluded_from_cache_key() {
         messages: vec![ChatMessage::user("test")],
         response_format: ResponseFormat::Text,
         service_tier: Some("flex".to_string()),
+        reasoning_effort: None,
         extra_body: None,
     };
 
     // The cache keys should be identical even though service_tier differs
     assert_eq!(request1.cache_key(), request2.cache_key());
 
-    // Verify that different messages produce different cache keys
+    // Test that reasoning_effort IS included in cache key (different reasoning_effort = different cache)
     let request3 = ChatRequest {
         model: "gpt-4o".to_string(),
-        messages: vec![ChatMessage::user("different message")],
+        messages: vec![ChatMessage::user("test")],
         response_format: ResponseFormat::Text,
-        service_tier: Some("flex".to_string()),
+        service_tier: None,
+        reasoning_effort: Some("high".to_string()),
         extra_body: None,
     };
 
     assert_ne!(request1.cache_key(), request3.cache_key());
+
+    // Verify that different messages produce different cache keys
+    let request4 = ChatRequest {
+        model: "gpt-4o".to_string(),
+        messages: vec![ChatMessage::user("different message")],
+        response_format: ResponseFormat::Text,
+        service_tier: Some("flex".to_string()),
+        reasoning_effort: Some("high".to_string()),
+        extra_body: None,
+    };
+
+    assert_ne!(request1.cache_key(), request4.cache_key());
 }
