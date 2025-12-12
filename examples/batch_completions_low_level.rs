@@ -26,6 +26,7 @@ async fn main() -> anyhow::Result<()> {
                 response_format: ResponseFormat::Text,
                 extra_body: None,
                 service_tier: None,
+                reasoning_effort: None,
             },
         ),
         BatchRequestItem::new_chat(
@@ -39,6 +40,7 @@ async fn main() -> anyhow::Result<()> {
                 response_format: ResponseFormat::Text,
                 extra_body: None,
                 service_tier: None,
+                reasoning_effort: None,
             },
         ),
         BatchRequestItem::new_chat(
@@ -52,6 +54,7 @@ async fn main() -> anyhow::Result<()> {
                 response_format: ResponseFormat::Text,
                 extra_body: None,
                 service_tier: None,
+                reasoning_effort: None,
             },
         ),
     ];
