@@ -585,7 +585,10 @@ impl ChatClient {
     ///
     /// If a cached file is not found in the main cache directory, the backup cache directory
     /// will be checked. If found there, the file will be moved to the main cache directory.
-    pub fn with_backup_cache_directory(mut self, backup_cache_directory: impl Into<PathBuf>) -> Self {
+    pub fn with_backup_cache_directory(
+        mut self,
+        backup_cache_directory: impl Into<PathBuf>,
+    ) -> Self {
         let backup_cache_directory = backup_cache_directory.into();
 
         if backup_cache_directory.exists() && backup_cache_directory.is_file() {
@@ -1202,7 +1205,8 @@ impl ChatClient {
                 // If not found in main cache, check backup cache directory
                 if let Some(backup_cache_directory) = &self.backup_cache_directory {
                     if backup_cache_directory.exists() {
-                        let backup_cache_path = backup_cache_directory.join(&chat_request_cache_key);
+                        let backup_cache_path =
+                            backup_cache_directory.join(&chat_request_cache_key);
                         if let Ok(data) = tokio::fs::read(&backup_cache_path).await {
                             // Found in backup cache, move it to main cache
                             if !cache_directory.exists() {

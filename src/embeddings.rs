@@ -185,7 +185,10 @@ impl EmbeddingsClient {
     ///
     /// If a cached file is not found in the main cache directory, the backup cache directory
     /// will be checked. If found there, the file will be moved to the main cache directory.
-    pub fn with_backup_cache_directory(mut self, backup_cache_directory: impl Into<PathBuf>) -> Self {
+    pub fn with_backup_cache_directory(
+        mut self,
+        backup_cache_directory: impl Into<PathBuf>,
+    ) -> Self {
         let backup_cache_directory = backup_cache_directory.into();
 
         if backup_cache_directory.exists() && backup_cache_directory.is_file() {
