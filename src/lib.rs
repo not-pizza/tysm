@@ -42,6 +42,7 @@
 //! Alternative name: **T**yped **S**chema **M**agic.
 
 #![deny(missing_docs)]
+#![deny(clippy::string_slice)]
 
 pub mod batch;
 pub mod chat_completions;
