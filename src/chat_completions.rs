@@ -12,6 +12,7 @@ use reqwest::Client;
 use schemars::{schema_for, transform::Transform, JsonSchema, Schema};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use thiserror::Error;
+use tokio::sync::Semaphore;
 use xxhash_rust::const_xxh3::xxh3_64 as const_xxh3;
 
 use crate::batch::{BatchResponseItem, BatchStatus};
@@ -35,6 +36,7 @@ use log::{debug, info};
 /// // (This will also look for an `.env` file in the current directory.)
 /// let client = ChatClient::from_env("gpt-4o").unwrap();
 /// ```
+#[non_exhaustive]
 pub struct ChatClient {
     /// The API key to use for the ChatGPT API.
     pub api_key: String,
@@ -62,6 +64,9 @@ pub struct ChatClient {
 
     /// Extra body to be provided when making requests
     pub extra_body: Option<serde_json::Value>,
+
+    /// Semaphore to limit the maximum number of concurrent requests
+    pub semaphore: Semaphore,
 }
 
 /// The role of a message.
@@ -564,6 +569,7 @@ impl ChatClient {
             service_tier: None,
             reasoning_effort: None,
             extra_body: None,
+            semaphore: Semaphore::new(100),
         }
     }
 
@@ -615,6 +621,14 @@ impl ChatClient {
     pub fn with_extra_body(mut self, extra_body: serde_json::Value) -> Self {
         self.extra_body = Some(extra_body);
         self
+    }
+
+    /// Set the maximum number of concurrent requests allowed
+    pub fn with_max_concurrent_requests(self, max: usize) -> Self {
+        Self {
+            semaphore: Semaphore::new(max),
+            ..self
+        }
     }
 
     /// Sets the base URL
@@ -1236,6 +1250,8 @@ impl ChatClient {
     }
 
     async fn chat_uncached(&self, chat_request: &ChatRequest) -> Result<String, ChatError> {
+        let _permit = self.semaphore.acquire().await.unwrap();
+
         let reqwest_client = Client::new();
 
         let response = reqwest_client

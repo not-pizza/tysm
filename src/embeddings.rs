@@ -7,6 +7,7 @@ use std::sync::RwLock;
 use lru::LruCache;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use tokio::sync::Semaphore;
 use xxhash_rust::const_xxh3::xxh3_64 as const_xxh3;
 
 #[derive(Debug, Serialize, Clone)]
@@ -72,6 +73,7 @@ use crate::{
 };
 
 /// A client for interacting with the OpenAI Embeddings API.
+#[non_exhaustive]
 pub struct EmbeddingsClient {
     /// The API key to use for the ChatGPT API.
     pub api_key: String,
@@ -95,6 +97,9 @@ pub struct EmbeddingsClient {
 
     /// Extra body to be provided when making requests
     pub extra_body: Option<serde_json::Value>,
+
+    /// Semaphore to limit the maximum number of concurrent requests
+    pub semaphore: Semaphore,
 }
 
 /// Errors that can occur when interacting with the ChatGPT API.
@@ -158,6 +163,7 @@ impl EmbeddingsClient {
             cache_directory: None,
             backup_cache_directory: None,
             extra_body: None,
+            semaphore: Semaphore::new(100),
         }
     }
 
@@ -239,6 +245,14 @@ impl EmbeddingsClient {
     pub fn with_extra_body(mut self, extra_body: serde_json::Value) -> Self {
         self.extra_body = Some(extra_body);
         self
+    }
+
+    /// Set the maximum number of concurrent requests allowed
+    pub fn with_max_concurrent_requests(self, max: usize) -> Self {
+        Self {
+            semaphore: Semaphore::new(max),
+            ..self
+        }
     }
 
     fn embeddings_url(&self) -> url::Url {
@@ -462,6 +476,8 @@ impl EmbeddingsClient {
         &self,
         request: &EmbeddingsRequest<'_>,
     ) -> Result<String, EmbeddingsError> {
+        let _permit = self.semaphore.acquire().await.unwrap();
+
         let client = Client::new();
 
         let response = client
