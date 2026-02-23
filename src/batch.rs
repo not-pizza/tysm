@@ -35,6 +35,8 @@ pub struct BatchClient {
     pub model: String,
     /// The client to use for file operations.
     pub files_client: FilesClient,
+    /// Shared HTTP client with connection pooling
+    pub http_client: Client,
 }
 
 impl From<&ChatClient> for BatchClient {
@@ -46,6 +48,7 @@ impl From<&ChatClient> for BatchClient {
             endpoint: "/v1/chat/completions".to_string(),
             model: client.model.clone(),
             files_client: FilesClient::from(client),
+            http_client: client.http_client.clone(),
         }
     }
 }
@@ -434,9 +437,9 @@ impl BatchClient {
         input_file_id: impl AsRef<str>,
         metadata: HashMap<String, String>,
     ) -> Result<Batch, CreateBatchError> {
-        let client = Client::new();
         let url = remove_trailing_slash(self.batches_url());
-        let response = client
+        let response = self
+            .http_client
             .post(url)
             .header("Authorization", format!("Bearer {}", self.api_key))
             .header("Content-Type", "application/json")
@@ -474,9 +477,9 @@ impl BatchClient {
 
     /// Get the status of a batch.
     pub async fn get_batch_status(&self, batch_id: &str) -> Result<Batch, GetBatchStatusError> {
-        let client = Client::new();
         let url = self.batches_url().join(batch_id).unwrap();
-        let response = client
+        let response = self
+            .http_client
             .get(url)
             .header("Authorization", format!("Bearer {}", self.api_key))
             .header("Content-Type", "application/json")
@@ -570,8 +573,8 @@ impl BatchClient {
 
     /// Cancel a batch.
     pub async fn cancel_batch(&self, batch_id: &str) -> Result<Batch, CancelBatchError> {
-        let client = Client::new();
-        let response = client
+        let response = self
+            .http_client
             .post(
                 self.batches_url()
                     .join(batch_id)
@@ -653,8 +656,8 @@ impl BatchClient {
             url.set_query(Some(&query_params.join("&")));
         }
 
-        let client = Client::new();
-        let response = client
+        let response = self
+            .http_client
             .get(remove_trailing_slash(url))
             .header("Authorization", format!("Bearer {}", self.api_key))
             .header("Content-Type", "application/json")

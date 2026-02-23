@@ -67,6 +67,9 @@ pub struct ChatClient {
 
     /// Semaphore to limit the maximum number of concurrent requests
     pub semaphore: Semaphore,
+
+    /// Shared HTTP client with connection pooling
+    pub http_client: Client,
 }
 
 /// The role of a message.
@@ -570,6 +573,7 @@ impl ChatClient {
             reasoning_effort: None,
             extra_body: None,
             semaphore: Semaphore::new(100),
+            http_client: crate::utils::pooled_client(),
         }
     }
 
@@ -1252,9 +1256,8 @@ impl ChatClient {
     async fn chat_uncached(&self, chat_request: &ChatRequest) -> Result<String, ChatError> {
         let _permit = self.semaphore.acquire().await.unwrap();
 
-        let reqwest_client = Client::new();
-
-        let response = reqwest_client
+        let response = self
+            .http_client
             .post(self.chat_completions_url())
             .header("Authorization", format!("Bearer {}", self.api_key.clone()))
             .header("Content-Type", "application/json")
