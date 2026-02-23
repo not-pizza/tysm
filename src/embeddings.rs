@@ -100,6 +100,9 @@ pub struct EmbeddingsClient {
 
     /// Semaphore to limit the maximum number of concurrent requests
     pub semaphore: Semaphore,
+
+    /// Shared HTTP client with connection pooling
+    pub http_client: Client,
 }
 
 /// Errors that can occur when interacting with the ChatGPT API.
@@ -164,6 +167,7 @@ impl EmbeddingsClient {
             backup_cache_directory: None,
             extra_body: None,
             semaphore: Semaphore::new(100),
+            http_client: crate::utils::pooled_client(),
         }
     }
 
@@ -478,9 +482,8 @@ impl EmbeddingsClient {
     ) -> Result<String, EmbeddingsError> {
         let _permit = self.semaphore.acquire().await.unwrap();
 
-        let client = Client::new();
-
-        let response = client
+        let response = self
+            .http_client
             .post(self.embeddings_url())
             .header("Authorization", format!("Bearer {}", self.api_key))
             .header("Content-Type", "application/json")

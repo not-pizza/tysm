@@ -24,3 +24,12 @@ pub(crate) fn remove_trailing_slash(url: url::Url) -> url::Url {
     url.set_path(path);
     url
 }
+
+/// Create a shared reqwest::Client with connection pooling configured for high concurrency.
+pub(crate) fn pooled_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .pool_max_idle_per_host(256)
+        .pool_idle_timeout(std::time::Duration::from_secs(300))
+        .build()
+        .expect("Failed to build HTTP client")
+}
