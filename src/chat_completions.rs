@@ -937,15 +937,14 @@ impl ChatClient {
                     .map_err(|e| ChatError::JsonSerializeError(e, chat_request.clone()))?;
 
                 if let Some(cache_directory) = &self.cache_directory {
-                    if !cache_directory.exists() {
-                        tokio::fs::create_dir_all(&cache_directory).await?;
-                    }
-
-                    let cache_path = cache_directory.join(chat_request_cache_key);
-
                     // Compress the response with zstd before writing to disk
                     let compressed = zstd::encode_all(chat_response.as_bytes(), 3)?;
-                    tokio::fs::write(&cache_path, compressed).await?;
+                    crate::utils::write_to_cache_dir(
+                        cache_directory,
+                        &chat_request_cache_key,
+                        &compressed,
+                    )
+                    .await?;
                 }
 
                 self.lru.insert(chat_request, chat_response.clone());
@@ -1206,7 +1205,7 @@ impl ChatClient {
             return Some(map_response(response.clone()));
         }
 
-        // Then, check the cache directory
+        // Then, check the cache directory (sharded, then flat)
         let cache_directory = self.cache_directory.as_ref()?;
         if !cache_directory.exists() {
             panic!(
@@ -1214,23 +1213,33 @@ impl ChatClient {
                 cache_directory.display()
             );
         }
-        let cache_path = cache_directory.join(&chat_request_cache_key);
 
-        // Read the compressed data from disk
-        let compressed_data = match tokio::fs::read(&cache_path).await.ok() {
+        // Read the compressed data from disk, checking sharded then flat paths,
+        // then falling back to backup cache directory
+        let compressed_data = match crate::utils::read_from_cache_dir(
+            cache_directory,
+            &chat_request_cache_key,
+        )
+        .await
+        {
             Some(data) => data,
             None => {
                 // If not found in main cache, check backup cache directory
                 if let Some(backup_cache_directory) = &self.backup_cache_directory {
                     if backup_cache_directory.exists() {
-                        let backup_cache_path =
-                            backup_cache_directory.join(&chat_request_cache_key);
-                        if let Ok(data) = tokio::fs::read(&backup_cache_path).await {
-                            // Found in backup cache, move it to main cache
-                            if !cache_directory.exists() {
-                                let _ = tokio::fs::create_dir_all(&cache_directory).await;
-                            }
-                            let _ = tokio::fs::rename(&backup_cache_path, &cache_path).await;
+                        if let Some(data) = crate::utils::read_from_cache_dir(
+                            backup_cache_directory,
+                            &chat_request_cache_key,
+                        )
+                        .await
+                        {
+                            // Found in backup cache, move it to main cache (sharded)
+                            let _ = crate::utils::write_to_cache_dir(
+                                cache_directory,
+                                &chat_request_cache_key,
+                                &data,
+                            )
+                            .await;
                             data
                         } else {
                             return None;
