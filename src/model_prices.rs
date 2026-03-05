@@ -184,6 +184,25 @@ pub(crate) const CHAT_COMPLETIONS: &[ModelCost] = &[
         cached_input: None,
         output: 12.00,
     },
+    // Google Gemini
+    ModelCost {
+        name: "gemini-3.1-pro",
+        input: 2.00,
+        cached_input: None,
+        output: 12.00,
+    },
+    ModelCost {
+        name: "gemini-3-flash",
+        input: 0.50,
+        cached_input: None,
+        output: 3.00,
+    },
+    ModelCost {
+        name: "gemini-3.1-flash-lite",
+        input: 0.25,
+        cached_input: None,
+        output: 1.50,
+    },
     // GPT-5 models
     ModelCost {
         name: "gpt-5.2-chat-latest",
