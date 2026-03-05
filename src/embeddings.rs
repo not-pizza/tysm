@@ -441,38 +441,37 @@ impl EmbeddingsClient {
 
         // Read the compressed data from disk, checking sharded then flat paths,
         // then falling back to backup cache directory
-        let compressed_data =
-            match crate::utils::read_from_cache_dir(cache_directory, &cache_key).await {
-                Some(data) => data,
-                None => {
-                    // If not found in main cache, check backup cache directory
-                    if let Some(backup_cache_directory) = &self.backup_cache_directory {
-                        if backup_cache_directory.exists() {
-                            if let Some(data) = crate::utils::read_from_cache_dir(
-                                backup_cache_directory,
+        let compressed_data = match crate::utils::read_from_cache_dir(cache_directory, &cache_key)
+            .await
+        {
+            Some(data) => data,
+            None => {
+                // If not found in main cache, check backup cache directory
+                if let Some(backup_cache_directory) = &self.backup_cache_directory {
+                    if backup_cache_directory.exists() {
+                        if let Some(data) =
+                            crate::utils::read_from_cache_dir(backup_cache_directory, &cache_key)
+                                .await
+                        {
+                            // Found in backup cache, copy it to main cache (sharded)
+                            let _ = crate::utils::write_to_cache_dir(
+                                cache_directory,
                                 &cache_key,
+                                &data,
                             )
-                            .await
-                            {
-                                // Found in backup cache, copy it to main cache (sharded)
-                                let _ = crate::utils::write_to_cache_dir(
-                                    cache_directory,
-                                    &cache_key,
-                                    &data,
-                                )
-                                .await;
-                                data
-                            } else {
-                                return None;
-                            }
+                            .await;
+                            data
                         } else {
                             return None;
                         }
                     } else {
                         return None;
                     }
+                } else {
+                    return None;
                 }
-            };
+            }
+        };
 
         // Decompress the data
         let decompressed_data = zstd::decode_all(compressed_data.as_slice()).ok()?;

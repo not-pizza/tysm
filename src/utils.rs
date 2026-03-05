@@ -50,10 +50,7 @@ pub(crate) fn cache_shard(cache_key: &str) -> String {
 ///
 /// If found in the flat location, moves it to the sharded location.
 /// Returns the data if found, or `None`.
-pub(crate) async fn read_from_cache_dir(
-    dir: &std::path::Path,
-    cache_key: &str,
-) -> Option<Vec<u8>> {
+pub(crate) async fn read_from_cache_dir(dir: &std::path::Path, cache_key: &str) -> Option<Vec<u8>> {
     let shard = cache_shard(cache_key);
     let sharded_path = dir.join(&shard).join(cache_key);
 
