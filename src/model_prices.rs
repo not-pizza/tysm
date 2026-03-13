@@ -205,6 +205,18 @@ pub(crate) const CHAT_COMPLETIONS: &[ModelCost] = &[
     },
     // GPT-5 models
     ModelCost {
+        name: "gpt-5.4-pro",
+        input: 30.00,
+        cached_input: None,
+        output: 180.00,
+    },
+    ModelCost {
+        name: "gpt-5.4",
+        input: 2.50,
+        cached_input: Some(0.25),
+        output: 15.00,
+    },
+    ModelCost {
         name: "gpt-5.2-chat-latest",
         input: 1.75,
         cached_input: Some(0.175),
