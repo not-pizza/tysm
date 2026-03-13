@@ -1262,18 +1262,44 @@ impl ChatClient {
     async fn chat_uncached(&self, chat_request: &ChatRequest) -> Result<String, ChatError> {
         let _permit = self.semaphore.acquire().await.unwrap();
 
-        let response = self
+        let mut request = self
             .http_client
             .post(self.chat_completions_url())
             .header("Authorization", format!("Bearer {}", self.api_key.clone()))
-            .header("Content-Type", "application/json")
-            .json(chat_request)
-            .send()
-            .await?
-            .text()
-            .await?;
+            .header("Content-Type", "application/json");
+
+        // Gemini's OpenAI-compatible endpoint doesn't support additionalProperties
+        // in JSON schemas. We strip it from the request body without affecting the
+        // cache key (which is computed from the original ChatRequest).
+        if self.base_url.host_str() == Some("generativelanguage.googleapis.com") {
+            let mut body = serde_json::to_value(chat_request).unwrap();
+            Self::strip_additional_properties(&mut body);
+            request = request.json(&body);
+        } else {
+            request = request.json(chat_request);
+        }
+
+        let response = request.send().await?.text().await?;
 
         Ok(response)
+    }
+
+    /// Recursively remove all `additionalProperties` keys from a JSON value.
+    fn strip_additional_properties(value: &mut serde_json::Value) {
+        match value {
+            serde_json::Value::Object(map) => {
+                map.remove("additionalProperties");
+                for v in map.values_mut() {
+                    Self::strip_additional_properties(v);
+                }
+            }
+            serde_json::Value::Array(arr) => {
+                for v in arr.iter_mut() {
+                    Self::strip_additional_properties(v);
+                }
+            }
+            _ => {}
+        }
     }
 
     fn decode_json<T: DeserializeOwned>(json: &str) -> Result<T, serde_json::Error> {
@@ -1392,4 +1418,26 @@ fn service_tier_excluded_from_cache_key() {
     };
 
     assert_ne!(request1.cache_key(), request4.cache_key());
+}
+
+#[tokio::test]
+async fn gemini_structured_output() {
+    use schemars::JsonSchema;
+    use serde::Deserialize;
+
+    #[derive(Deserialize, Debug, JsonSchema)]
+    #[allow(dead_code)]
+    struct CapitalCity {
+        city: String,
+        country: String,
+    }
+
+    dotenvy::dotenv().ok();
+    let api_key = std::env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY must be set");
+
+    let client = ChatClient::new(api_key, "gemini-2.5-flash")
+        .with_url("https://generativelanguage.googleapis.com/v1beta/openai/");
+
+    let result: CapitalCity = client.chat("What is the capital of France?").await.unwrap();
+    assert_eq!(result.city, "Paris");
 }
