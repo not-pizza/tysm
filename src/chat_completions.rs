@@ -1420,6 +1420,7 @@ fn service_tier_excluded_from_cache_key() {
     assert_ne!(request1.cache_key(), request4.cache_key());
 }
 
+#[cfg(test)]
 #[tokio::test]
 async fn gemini_structured_output() {
     use schemars::JsonSchema;
