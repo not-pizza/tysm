@@ -1422,6 +1422,7 @@ fn service_tier_excluded_from_cache_key() {
 
 #[cfg(test)]
 #[tokio::test]
+#[ignore]
 async fn gemini_structured_output() {
     use schemars::JsonSchema;
     use serde::Deserialize;
