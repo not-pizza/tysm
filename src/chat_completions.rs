@@ -1434,6 +1434,7 @@ async fn gemini_structured_output() {
         country: String,
     }
 
+    #[cfg(feature = "dotenvy")]
     dotenvy::dotenv().ok();
     let api_key = std::env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY must be set");
 
