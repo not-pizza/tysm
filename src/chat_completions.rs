@@ -265,21 +265,16 @@ impl JsonSchemaFormat {
         Self {
             name: ty_name.to_string(),
             strict: true,
-            schema: SchemaFormat {
-                additional_properties: false,
-                schema,
-            },
+            schema: SchemaFormat { schema },
         }
     }
 }
 
-/// A JSON schema with an "additionalProperties" field (expected by OpenAI).
+/// A JSON schema format wrapper.
+/// The `additionalProperties` constraint is handled by [`OpenAiTransform`](crate::schema::OpenAiTransform)
+/// which adds it only to object-type schemas.
 #[derive(Serialize, Debug, Clone)]
 pub struct SchemaFormat {
-    /// Whether additional properties are allowed. For OpenAI, you always want this to be false.
-    #[serde(rename = "additionalProperties")]
-    pub additional_properties: bool,
-
     /// The schema.
     #[serde(flatten)]
     pub schema: Schema,
@@ -1418,6 +1413,52 @@ fn service_tier_excluded_from_cache_key() {
     };
 
     assert_ne!(request1.cache_key(), request4.cache_key());
+}
+
+#[test]
+fn schema_has_no_duplicate_additional_properties() {
+    use schemars::JsonSchema;
+
+    #[derive(JsonSchema)]
+    #[allow(dead_code)]
+    struct TestStruct {
+        name: String,
+        age: u32,
+    }
+
+    let schema = JsonSchemaFormat::new::<TestStruct>();
+    let serialized = serde_json::to_string_pretty(&schema).unwrap();
+    println!("{serialized}");
+
+    // additionalProperties should only appear on object-type schemas, not on primitives,
+    // and should never be duplicated
+    let count = serialized.matches("additionalProperties").count();
+    assert_eq!(
+        count, 1,
+        "Expected exactly 1 additionalProperties (on the root object) but found {count} in:\n{serialized}"
+    );
+}
+
+#[cfg(test)]
+#[tokio::test]
+#[ignore]
+async fn openai_structured_output() {
+    use schemars::JsonSchema;
+    use serde::Deserialize;
+
+    #[derive(Deserialize, Debug, JsonSchema)]
+    #[allow(dead_code)]
+    struct CapitalCity {
+        city: String,
+        country: String,
+    }
+
+    #[cfg(feature = "dotenvy")]
+    dotenvy::dotenv().ok();
+    let client = ChatClient::from_env("gpt-4o-mini").unwrap();
+
+    let result: CapitalCity = client.chat("What is the capital of France?").await.unwrap();
+    assert_eq!(result.city, "Paris");
 }
 
 #[cfg(test)]
