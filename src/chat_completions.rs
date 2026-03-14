@@ -1704,7 +1704,7 @@ async fn gemini_audio_transcription() {
     dotenvy::dotenv().ok();
     let api_key = std::env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY must be set");
 
-    let client = ChatClient::new(api_key, "gemini-2.5-flash")
+    let client = ChatClient::new(api_key, "gemini-3-flash-preview")
         .with_url("https://generativelanguage.googleapis.com/v1beta/openai/");
 
     let audio_bytes = std::fs::read("test_fixtures/harvard.wav").unwrap();
@@ -1725,6 +1725,7 @@ async fn gemini_audio_transcription() {
         .unwrap();
 
     // Harvard sentences - just check a few key phrases are present
+    println!("Transcription: {}", result.text);
     let text = result.text.to_lowercase();
     assert!(
         text.contains("stale smell of old beer"),
