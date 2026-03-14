@@ -163,6 +163,19 @@ pub enum ChatMessageContent {
         #[serde(rename = "image_url")]
         image: ImageUrl,
     },
+    /// Audio input as base64-encoded data.
+    /// ```rust,no_run
+    /// use tysm::chat_completions::{ChatMessageContent, InputAudio};
+    ///
+    /// let audio_bytes = std::fs::read("audio.wav").unwrap();
+    /// let content = ChatMessageContent::InputAudio {
+    ///     input_audio: InputAudio::wav(audio_bytes),
+    /// };
+    /// ```
+    InputAudio {
+        /// The audio data.
+        input_audio: InputAudio,
+    },
 }
 
 /// An image URL. OpenAI will accept a link to an image, or a base64 encoded image.
@@ -170,6 +183,35 @@ pub enum ChatMessageContent {
 pub struct ImageUrl {
     /// The image URL.
     pub url: String,
+}
+
+/// Base64-encoded audio input.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct InputAudio {
+    /// Base64-encoded audio data.
+    pub data: String,
+    /// The audio format (e.g. "wav", "mp3").
+    pub format: String,
+}
+
+impl InputAudio {
+    /// Create an `InputAudio` from raw WAV bytes.
+    pub fn wav(bytes: impl AsRef<[u8]>) -> Self {
+        use base64::Engine;
+        Self {
+            data: base64::engine::general_purpose::STANDARD.encode(bytes),
+            format: "wav".to_string(),
+        }
+    }
+
+    /// Create an `InputAudio` from raw MP3 bytes.
+    pub fn mp3(bytes: impl AsRef<[u8]>) -> Self {
+        use base64::Engine;
+        Self {
+            data: base64::engine::general_purpose::STANDARD.encode(bytes),
+            format: "mp3".to_string(),
+        }
+    }
 }
 
 /// A request to the ChatGPT API. You probably will not need to use this directly,
@@ -1643,4 +1685,50 @@ async fn gemini_structured_output() {
 
     let result: CapitalCity = client.chat("What is the capital of France?").await.unwrap();
     assert_eq!(result.city, "Paris");
+}
+
+#[cfg(test)]
+#[tokio::test]
+#[ignore]
+async fn gemini_audio_transcription() {
+    use schemars::JsonSchema;
+    use serde::Deserialize;
+
+    #[derive(Deserialize, Debug, JsonSchema)]
+    #[allow(dead_code)]
+    struct Transcription {
+        text: String,
+    }
+
+    #[cfg(feature = "dotenvy")]
+    dotenvy::dotenv().ok();
+    let api_key = std::env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY must be set");
+
+    let client = ChatClient::new(api_key, "gemini-2.5-flash")
+        .with_url("https://generativelanguage.googleapis.com/v1beta/openai/");
+
+    let audio_bytes = std::fs::read("test_fixtures/harvard.wav").unwrap();
+
+    let result: Transcription = client
+        .chat_with_messages(vec![ChatMessage::new(
+            Role::User,
+            vec![
+                ChatMessageContent::InputAudio {
+                    input_audio: InputAudio::wav(audio_bytes),
+                },
+                ChatMessageContent::Text {
+                    text: "Transcribe this audio exactly.".to_string(),
+                },
+            ],
+        )])
+        .await
+        .unwrap();
+
+    // Harvard sentences - just check a few key phrases are present
+    let text = result.text.to_lowercase();
+    assert!(
+        text.contains("stale smell of old beer"),
+        "Expected 'stale smell of old beer' in transcription, got: {}",
+        result.text
+    );
 }
