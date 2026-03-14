@@ -209,7 +209,125 @@ impl ChatRequest {
         let id = const_xxh3(serialized.as_bytes());
         format!("tysm-v1-chat_request-{}.zstd", id)
     }
+
+    // LEGACY CACHE KEY MIGRATION (can be removed in a future version once caches have been migrated)
+    //
+    // Prior to v0.17.1, SchemaFormat had an explicit `additionalProperties: false` field
+    // AND OpenAiTransform also inserted `additionalProperties` into every schema object
+    // (including primitives). This produced duplicate keys in the serialized JSON, which
+    // changed the cache key hash. This method reproduces the old serialization so we can
+    // find and migrate cached responses.
+    fn legacy_cache_key(&self) -> String {
+        let mut cacheable = self.clone();
+        cacheable.service_tier = None;
+
+        let serialized = serde_json::to_string(&LegacyChatRequest::from(cacheable)).unwrap();
+        let id = const_xxh3(serialized.as_bytes());
+        format!("tysm-v1-chat_request-{}.zstd", id)
+    }
 }
+
+// LEGACY TYPES FOR CACHE KEY MIGRATION (can be removed in a future version)
+//
+// These types reproduce the old serialization format where SchemaFormat had an
+// explicit `additionalProperties: false` field that duplicated the one added by
+// OpenAiTransform. They exist solely to compute legacy cache keys for migration.
+
+#[derive(Serialize)]
+struct LegacySchemaFormat {
+    #[serde(rename = "additionalProperties")]
+    additional_properties: bool,
+    #[serde(flatten)]
+    schema: Schema,
+}
+
+#[derive(Serialize)]
+struct LegacyJsonSchemaFormat {
+    name: String,
+    strict: bool,
+    schema: LegacySchemaFormat,
+}
+
+#[derive(Serialize)]
+#[serde(tag = "type")]
+enum LegacyResponseFormat {
+    #[serde(rename = "json_schema")]
+    JsonSchema {
+        json_schema: LegacyJsonSchemaFormat,
+    },
+    #[serde(rename = "json_object")]
+    JsonObject,
+    #[serde(rename = "text")]
+    Text,
+}
+
+#[derive(Serialize)]
+struct LegacyChatRequest {
+    model: String,
+    messages: Vec<ChatMessage>,
+    response_format: LegacyResponseFormat,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    service_tier: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_effort: Option<String>,
+    #[serde(flatten)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    extra_body: Option<serde_json::Value>,
+}
+
+impl From<ChatRequest> for LegacyChatRequest {
+    fn from(req: ChatRequest) -> Self {
+        let response_format = match req.response_format {
+            ResponseFormat::JsonSchema { json_schema } => {
+                // Re-apply the old transform that added additionalProperties to ALL
+                // schema objects (including primitives like string/integer)
+                let mut schema = json_schema.schema.schema;
+                LegacyOpenAiTransform.transform(&mut schema);
+
+                LegacyResponseFormat::JsonSchema {
+                    json_schema: LegacyJsonSchemaFormat {
+                        name: json_schema.name,
+                        strict: json_schema.strict,
+                        schema: LegacySchemaFormat {
+                            additional_properties: false,
+                            schema,
+                        },
+                    },
+                }
+            }
+            ResponseFormat::JsonObject => LegacyResponseFormat::JsonObject,
+            ResponseFormat::Text => LegacyResponseFormat::Text,
+        };
+
+        LegacyChatRequest {
+            model: req.model,
+            messages: req.messages,
+            response_format,
+            service_tier: req.service_tier,
+            reasoning_effort: req.reasoning_effort,
+            extra_body: req.extra_body,
+        }
+    }
+}
+
+/// The old OpenAiTransform added `additionalProperties: false` to ALL schema objects,
+/// not just object-type ones. We need to reproduce that for legacy cache key computation.
+struct LegacyOpenAiTransform;
+
+impl schemars::transform::Transform for LegacyOpenAiTransform {
+    fn transform(&mut self, schema: &mut Schema) {
+        if let Some(obj) = schema.as_object_mut() {
+            if obj.get("$ref").is_none() {
+                obj.insert(
+                    "additionalProperties".to_string(),
+                    serde_json::Value::Bool(false),
+                );
+            }
+        }
+        schemars::transform::transform_subschemas(self, schema);
+    }
+}
+// END LEGACY TYPES
 
 /// An object specifying the format that the model must output.
 /// `ResponseFormat::JsonSchema` enables Structured Outputs which ensures the model will match your supplied JSON schema
@@ -1193,6 +1311,8 @@ impl ChatClient {
         map_response: impl FnOnce(String) -> Result<T, ChatError>,
     ) -> Option<Result<T, ChatError>> {
         let chat_request_cache_key = chat_request.cache_key();
+        // LEGACY CACHE KEY MIGRATION (can be removed in a future version)
+        let legacy_cache_key = chat_request.legacy_cache_key();
         let chat_request = serde_json::to_string(chat_request).ok()?;
 
         // First, check the cache
@@ -1209,41 +1329,74 @@ impl ChatClient {
             );
         }
 
-        // Read the compressed data from disk, checking sharded then flat paths,
-        // then falling back to backup cache directory
-        let compressed_data =
-            match crate::utils::read_from_cache_dir(cache_directory, &chat_request_cache_key).await
-            {
-                Some(data) => data,
-                None => {
-                    // If not found in main cache, check backup cache directory
-                    if let Some(backup_cache_directory) = &self.backup_cache_directory {
-                        if backup_cache_directory.exists() {
-                            if let Some(data) = crate::utils::read_from_cache_dir(
-                                backup_cache_directory,
-                                &chat_request_cache_key,
+        // Helper to search for a cache key across main and backup cache directories.
+        // Returns the compressed data if found, and copies it to the main cache under
+        // `copy_as_key` if it was found elsewhere.
+        let find_in_cache = |key: &str, copy_as_key: &str| {
+            let cache_directory = cache_directory.clone();
+            let backup_cache_directory = self.backup_cache_directory.clone();
+            let key = key.to_string();
+            let copy_as_key = copy_as_key.to_string();
+            async move {
+                // Check main cache directory
+                if let Some(data) =
+                    crate::utils::read_from_cache_dir(&cache_directory, &key).await
+                {
+                    // If found under a different key, copy to the canonical key
+                    if key != copy_as_key {
+                        let _ = crate::utils::write_to_cache_dir(
+                            &cache_directory,
+                            &copy_as_key,
+                            &data,
+                        )
+                        .await;
+                    }
+                    return Some(data);
+                }
+
+                // Check backup cache directory
+                if let Some(backup) = &backup_cache_directory {
+                    if backup.exists() {
+                        if let Some(data) =
+                            crate::utils::read_from_cache_dir(backup, &key).await
+                        {
+                            // Copy to main cache under the canonical key
+                            let _ = crate::utils::write_to_cache_dir(
+                                &cache_directory,
+                                &copy_as_key,
+                                &data,
                             )
-                            .await
-                            {
-                                // Found in backup cache, move it to main cache (sharded)
-                                let _ = crate::utils::write_to_cache_dir(
-                                    cache_directory,
-                                    &chat_request_cache_key,
-                                    &data,
-                                )
-                                .await;
-                                data
-                            } else {
-                                return None;
-                            }
-                        } else {
-                            return None;
+                            .await;
+                            return Some(data);
                         }
-                    } else {
-                        return None;
                     }
                 }
-            };
+
+                None
+            }
+        };
+
+        // Read the compressed data from disk, checking sharded then flat paths,
+        // then falling back to backup cache directory
+        let compressed_data = if let Some(data) =
+            find_in_cache(&chat_request_cache_key, &chat_request_cache_key).await
+        {
+            data
+        }
+        // LEGACY CACHE KEY MIGRATION (can be removed in a future version)
+        // Try the legacy cache key (pre-v0.17.1 format with duplicate additionalProperties).
+        // If found, copy to the new cache key so future lookups use the new format.
+        else if legacy_cache_key != chat_request_cache_key {
+            if let Some(data) = find_in_cache(&legacy_cache_key, &chat_request_cache_key).await {
+                data
+            } else {
+                return None;
+            }
+        }
+        // END LEGACY CACHE KEY MIGRATION
+        else {
+            return None;
+        };
 
         // Decompress the data
         let decompressed_data = zstd::decode_all(compressed_data.as_slice()).ok()?;
@@ -1436,6 +1589,38 @@ fn schema_has_no_duplicate_additional_properties() {
     assert_eq!(
         count, 1,
         "Expected exactly 1 additionalProperties (on the root object) but found {count} in:\n{serialized}"
+    );
+
+    // Verify the legacy cache key differs from the new one (proving migration is needed)
+    let request = ChatRequest {
+        model: "gpt-4o".to_string(),
+        messages: vec![ChatMessage::user("test")],
+        response_format: ResponseFormat::JsonSchema {
+            json_schema: JsonSchemaFormat::new::<TestStruct>(),
+        },
+        service_tier: None,
+        reasoning_effort: None,
+        extra_body: None,
+    };
+    assert_ne!(
+        request.cache_key(),
+        request.legacy_cache_key(),
+        "Legacy and new cache keys should differ for structured output requests"
+    );
+
+    // But for non-schema requests, they should be the same
+    let text_request = ChatRequest {
+        model: "gpt-4o".to_string(),
+        messages: vec![ChatMessage::user("test")],
+        response_format: ResponseFormat::Text,
+        service_tier: None,
+        reasoning_effort: None,
+        extra_body: None,
+    };
+    assert_eq!(
+        text_request.cache_key(),
+        text_request.legacy_cache_key(),
+        "Legacy and new cache keys should match for non-schema requests"
     );
 }
 
