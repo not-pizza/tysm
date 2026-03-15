@@ -70,6 +70,10 @@ pub struct ChatClient {
 
     /// Shared HTTP client with connection pooling
     pub http_client: Client,
+
+    /// If true, all uncached requests will fail with [`ChatError::CacheMiss`] instead of
+    /// hitting the API. Useful for testing or offline usage.
+    pub cached_only: bool,
 }
 
 /// The role of a message.
@@ -629,6 +633,10 @@ pub enum ChatError {
     /// The API did not return any choices.
     #[error("No choices returned from API")]
     NoChoices,
+
+    /// The request was not found in the cache and the client is in cached-only mode.
+    #[error("Cache miss: request not found in cache (cached_only mode is enabled)")]
+    CacheMiss,
 }
 
 /// Errors that can occur when sending many chat requests via the batch API.
@@ -729,6 +737,7 @@ impl ChatClient {
             extra_body: None,
             semaphore: Semaphore::new(100),
             http_client: crate::utils::pooled_client(),
+            cached_only: false,
         }
     }
 
@@ -786,6 +795,15 @@ impl ChatClient {
     pub fn with_max_concurrent_requests(self, max: usize) -> Self {
         Self {
             semaphore: Semaphore::new(max),
+            ..self
+        }
+    }
+
+    /// If set, all uncached requests will fail with [`ChatError::CacheMiss`] instead of
+    /// hitting the API. Useful for testing or offline usage.
+    pub fn with_cached_only(self) -> Self {
+        Self {
+            cached_only: true,
             ..self
         }
     }
@@ -1081,6 +1099,9 @@ impl ChatClient {
             let (result, _usage) = cached_response?;
             result
         } else {
+            if self.cached_only {
+                return Err(ChatError::CacheMiss);
+            }
             let chat_response = self.chat_uncached(&chat_request).await?;
             let (result, usage) = process_result(chat_response.clone())?;
             *self.usage.write().unwrap() += usage;
