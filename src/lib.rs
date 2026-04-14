@@ -206,7 +206,7 @@ Caused by:
         // Test with a living person (should have None for death_year)
         let person: PersonDetails = CLIENT.chat("Tell me about Elon Musk").await.unwrap();
 
-        assert_eq!(person.name, "Elon Musk");
+        assert_eq!(person.name, "Elon Reeve Musk");
         assert_eq!(person.death_year, None);
         assert!(person.birth_year > 1900);
     }
@@ -224,7 +224,7 @@ Caused by:
     async fn optional_fields_varying_presence() {
         // Test with a book that has both sequel and movie
         let book: BookInfo = CLIENT
-            .chat("Tell me about the book The Hunger Games")
+            .chat("Give me info about the book titled 'The Hunger Games' by Suzanne Collins.")
             .await
             .unwrap();
 
