@@ -69,7 +69,7 @@ pub(crate) const CHAT_COMPLETIONS: &[ModelCost] = &[
         output: 4.0,
     },
     // OpenAI
-    // Copied from https://platform.openai.com/docs/pricing on 2025-04-17
+    // Copied from https://platform.openai.com/docs/pricing on 2026-03-17
     ModelCost {
         name: "gpt-4.1",
         input: 2.00,
@@ -217,6 +217,18 @@ pub(crate) const CHAT_COMPLETIONS: &[ModelCost] = &[
         output: 15.00,
     },
     ModelCost {
+        name: "gpt-5.4-mini",
+        input: 0.75,
+        cached_input: Some(0.075),
+        output: 4.50,
+    },
+    ModelCost {
+        name: "gpt-5.4-nano",
+        input: 0.20,
+        cached_input: Some(0.02),
+        output: 1.25,
+    },
+    ModelCost {
         name: "gpt-5.2-chat-latest",
         input: 1.75,
         cached_input: Some(0.175),
@@ -296,11 +308,107 @@ pub(crate) const CHAT_COMPLETIONS: &[ModelCost] = &[
     },
 ];
 
-pub(crate) fn cost(model: &str, usage: crate::chat_completions::ChatUsage) -> Option<f64> {
-    let model_cost = CHAT_COMPLETIONS
+// Flex tier pricing (OpenAI)
+// Copied from https://platform.openai.com/docs/pricing on 2026-03-17
+pub(crate) const FLEX_PRICES: &[ModelCost] = &[
+    ModelCost {
+        name: "gpt-5.4",
+        input: 1.25,
+        cached_input: Some(0.13),
+        output: 7.50,
+    },
+    ModelCost {
+        name: "gpt-5.4-pro",
+        input: 15.00,
+        cached_input: None,
+        output: 90.00,
+    },
+    ModelCost {
+        name: "gpt-5.4-mini",
+        input: 0.375,
+        cached_input: Some(0.0375),
+        output: 2.25,
+    },
+    ModelCost {
+        name: "gpt-5.4-nano",
+        input: 0.10,
+        cached_input: Some(0.01),
+        output: 0.625,
+    },
+    ModelCost {
+        name: "gpt-5.2",
+        input: 0.875,
+        cached_input: Some(0.0875),
+        output: 7.00,
+    },
+    ModelCost {
+        name: "gpt-5.1",
+        input: 0.625,
+        cached_input: Some(0.0625),
+        output: 5.00,
+    },
+    ModelCost {
+        name: "gpt-5",
+        input: 0.625,
+        cached_input: Some(0.0625),
+        output: 5.00,
+    },
+    ModelCost {
+        name: "gpt-5-mini",
+        input: 0.125,
+        cached_input: Some(0.0125),
+        output: 1.00,
+    },
+    ModelCost {
+        name: "gpt-5-nano",
+        input: 0.025,
+        cached_input: Some(0.0025),
+        output: 0.20,
+    },
+    ModelCost {
+        name: "o3",
+        input: 1.00,
+        cached_input: Some(0.25),
+        output: 4.00,
+    },
+    ModelCost {
+        name: "o4-mini",
+        input: 0.55,
+        cached_input: Some(0.138),
+        output: 2.20,
+    },
+];
+
+// Priority tier pricing (OpenAI)
+// Copied from https://platform.openai.com/docs/pricing on 2026-03-17
+pub(crate) const PRIORITY_PRICES: &[ModelCost] = &[ModelCost {
+    name: "gpt-5.4",
+    input: 5.00,
+    cached_input: Some(0.50),
+    output: 30.00,
+}];
+
+fn lookup<'a>(table: &'a [ModelCost], model: &str) -> Option<&'a ModelCost> {
+    table
         .iter()
         .filter(|mc| model.starts_with(mc.name))
-        .max_by_key(|mc| mc.name.len())?;
+        .max_by_key(|mc| mc.name.len())
+}
+
+pub(crate) fn cost(
+    model: &str,
+    service_tier: Option<&str>,
+    usage: crate::chat_completions::ChatUsage,
+) -> Option<f64> {
+    let tier_table = match service_tier {
+        Some("flex") => Some(FLEX_PRICES),
+        Some("priority") => Some(PRIORITY_PRICES),
+        _ => None,
+    };
+    let model_cost = tier_table
+        .and_then(|t| lookup(t, model))
+        .or_else(|| lookup(CHAT_COMPLETIONS, model))?;
+
     let (cached_prompt_tokens, uncached_prompt_tokens) =
         if let Some(details) = usage.prompt_token_details {
             (
@@ -333,10 +441,53 @@ mod tests {
             completion_token_details: None,
             total_tokens: 2000000,
         };
-        let cost = cost("gpt-4o", usage);
+        let cost = cost("gpt-4o", None, usage);
         // input: 2.50,
         // cached_input: Some(1.25),
         // output: 10.00,
         assert_eq!(cost, Some(2.50 + 1.25 + 10.00));
+    }
+
+    #[test]
+    fn test_flex_cost() {
+        let usage = crate::chat_completions::ChatUsage {
+            prompt_tokens: 1000000,
+            completion_tokens: 1000000,
+            prompt_token_details: None,
+            completion_token_details: None,
+            total_tokens: 2000000,
+        };
+        // gpt-5.4 flex: input 1.25, output 7.50
+        let c = cost("gpt-5.4", Some("flex"), usage);
+        assert_eq!(c, Some(1.25 + 7.50));
+    }
+
+    #[test]
+    fn test_priority_cost() {
+        let usage = crate::chat_completions::ChatUsage {
+            prompt_tokens: 1000000,
+            completion_tokens: 1000000,
+            prompt_token_details: None,
+            completion_token_details: None,
+            total_tokens: 2000000,
+        };
+        // gpt-5.4 priority: input 5.00, output 30.00
+        let c = cost("gpt-5.4", Some("priority"), usage);
+        assert_eq!(c, Some(5.00 + 30.00));
+    }
+
+    #[test]
+    fn test_tier_falls_back_to_standard() {
+        let usage = crate::chat_completions::ChatUsage {
+            prompt_tokens: 1000000,
+            completion_tokens: 1000000,
+            prompt_token_details: None,
+            completion_token_details: None,
+            total_tokens: 2000000,
+        };
+        // gpt-4o has no flex pricing, should fall back to standard
+        let standard = cost("gpt-4o", None, usage);
+        let flex = cost("gpt-4o", Some("flex"), usage);
+        assert_eq!(standard, flex);
     }
 }

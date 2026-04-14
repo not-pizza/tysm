@@ -298,9 +298,7 @@ struct LegacyJsonSchemaFormat {
 #[serde(tag = "type")]
 enum LegacyResponseFormat {
     #[serde(rename = "json_schema")]
-    JsonSchema {
-        json_schema: LegacyJsonSchemaFormat,
-    },
+    JsonSchema { json_schema: LegacyJsonSchemaFormat },
     #[serde(rename = "json_object")]
     JsonObject,
     #[serde(rename = "text")]
@@ -1402,17 +1400,13 @@ impl ChatClient {
             let copy_as_key = copy_as_key.to_string();
             async move {
                 // Check main cache directory
-                if let Some(data) =
-                    crate::utils::read_from_cache_dir(&cache_directory, &key).await
+                if let Some(data) = crate::utils::read_from_cache_dir(&cache_directory, &key).await
                 {
                     // If found under a different key, copy to the canonical key
                     if key != copy_as_key {
-                        let _ = crate::utils::write_to_cache_dir(
-                            &cache_directory,
-                            &copy_as_key,
-                            &data,
-                        )
-                        .await;
+                        let _ =
+                            crate::utils::write_to_cache_dir(&cache_directory, &copy_as_key, &data)
+                                .await;
                     }
                     return Some(data);
                 }
@@ -1420,9 +1414,7 @@ impl ChatClient {
                 // Check backup cache directory
                 if let Some(backup) = &backup_cache_directory {
                     if backup.exists() {
-                        if let Some(data) =
-                            crate::utils::read_from_cache_dir(backup, &key).await
-                        {
+                        if let Some(data) = crate::utils::read_from_cache_dir(backup, &key).await {
                             // Copy to main cache under the canonical key
                             let _ = crate::utils::write_to_cache_dir(
                                 &cache_directory,
@@ -1522,7 +1514,7 @@ impl ChatClient {
     /// If you notice the prices being out of date, [please leave an issue](https://github.com/not-pizza/tysm)!
     pub fn cost(&self) -> Option<f64> {
         let usage = self.usage();
-        crate::model_prices::cost(&self.model, usage)
+        crate::model_prices::cost(&self.model, self.service_tier.as_deref(), usage)
     }
 }
 
