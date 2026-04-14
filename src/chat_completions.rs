@@ -1442,11 +1442,7 @@ impl ChatClient {
         // Try the legacy cache key (pre-v0.17.1 format with duplicate additionalProperties).
         // If found, copy to the new cache key so future lookups use the new format.
         else if legacy_cache_key != chat_request_cache_key {
-            if let Some(data) = find_in_cache(&legacy_cache_key, &chat_request_cache_key).await {
-                data
-            } else {
-                return None;
-            }
+            find_in_cache(&legacy_cache_key, &chat_request_cache_key).await?
         }
         // END LEGACY CACHE KEY MIGRATION
         else {
