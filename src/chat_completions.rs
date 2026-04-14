@@ -70,6 +70,10 @@ pub struct ChatClient {
 
     /// Shared HTTP client with connection pooling
     pub http_client: Client,
+
+    /// If true, all uncached requests will fail with [`ChatError::CacheMiss`] instead of
+    /// hitting the API. Useful for testing or offline usage.
+    pub cached_only: bool,
 }
 
 /// The role of a message.
@@ -163,6 +167,19 @@ pub enum ChatMessageContent {
         #[serde(rename = "image_url")]
         image: ImageUrl,
     },
+    /// Audio input as base64-encoded data.
+    /// ```rust,no_run
+    /// use tysm::chat_completions::{ChatMessageContent, InputAudio};
+    ///
+    /// let audio_bytes = std::fs::read("audio.wav").unwrap();
+    /// let content = ChatMessageContent::InputAudio {
+    ///     input_audio: InputAudio::wav(audio_bytes),
+    /// };
+    /// ```
+    InputAudio {
+        /// The audio data.
+        input_audio: InputAudio,
+    },
 }
 
 /// An image URL. OpenAI will accept a link to an image, or a base64 encoded image.
@@ -170,6 +187,35 @@ pub enum ChatMessageContent {
 pub struct ImageUrl {
     /// The image URL.
     pub url: String,
+}
+
+/// Base64-encoded audio input.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct InputAudio {
+    /// Base64-encoded audio data.
+    pub data: String,
+    /// The audio format (e.g. "wav", "mp3").
+    pub format: String,
+}
+
+impl InputAudio {
+    /// Create an `InputAudio` from raw WAV bytes.
+    pub fn wav(bytes: impl AsRef<[u8]>) -> Self {
+        use base64::Engine;
+        Self {
+            data: base64::engine::general_purpose::STANDARD.encode(bytes),
+            format: "wav".to_string(),
+        }
+    }
+
+    /// Create an `InputAudio` from raw MP3 bytes.
+    pub fn mp3(bytes: impl AsRef<[u8]>) -> Self {
+        use base64::Engine;
+        Self {
+            data: base64::engine::general_purpose::STANDARD.encode(bytes),
+            format: "mp3".to_string(),
+        }
+    }
 }
 
 /// A request to the ChatGPT API. You probably will not need to use this directly,
@@ -209,7 +255,123 @@ impl ChatRequest {
         let id = const_xxh3(serialized.as_bytes());
         format!("tysm-v1-chat_request-{}.zstd", id)
     }
+
+    // LEGACY CACHE KEY MIGRATION (can be removed in a future version once caches have been migrated)
+    //
+    // Prior to v0.17.1, SchemaFormat had an explicit `additionalProperties: false` field
+    // AND OpenAiTransform also inserted `additionalProperties` into every schema object
+    // (including primitives). This produced duplicate keys in the serialized JSON, which
+    // changed the cache key hash. This method reproduces the old serialization so we can
+    // find and migrate cached responses.
+    fn legacy_cache_key(&self) -> String {
+        let mut cacheable = self.clone();
+        cacheable.service_tier = None;
+
+        let serialized = serde_json::to_string(&LegacyChatRequest::from(cacheable)).unwrap();
+        let id = const_xxh3(serialized.as_bytes());
+        format!("tysm-v1-chat_request-{}.zstd", id)
+    }
 }
+
+// LEGACY TYPES FOR CACHE KEY MIGRATION (can be removed in a future version)
+//
+// These types reproduce the old serialization format where SchemaFormat had an
+// explicit `additionalProperties: false` field that duplicated the one added by
+// OpenAiTransform. They exist solely to compute legacy cache keys for migration.
+
+#[derive(Serialize)]
+struct LegacySchemaFormat {
+    #[serde(rename = "additionalProperties")]
+    additional_properties: bool,
+    #[serde(flatten)]
+    schema: Schema,
+}
+
+#[derive(Serialize)]
+struct LegacyJsonSchemaFormat {
+    name: String,
+    strict: bool,
+    schema: LegacySchemaFormat,
+}
+
+#[derive(Serialize)]
+#[serde(tag = "type")]
+enum LegacyResponseFormat {
+    #[serde(rename = "json_schema")]
+    JsonSchema { json_schema: LegacyJsonSchemaFormat },
+    #[serde(rename = "json_object")]
+    JsonObject,
+    #[serde(rename = "text")]
+    Text,
+}
+
+#[derive(Serialize)]
+struct LegacyChatRequest {
+    model: String,
+    messages: Vec<ChatMessage>,
+    response_format: LegacyResponseFormat,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    service_tier: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_effort: Option<String>,
+    #[serde(flatten)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    extra_body: Option<serde_json::Value>,
+}
+
+impl From<ChatRequest> for LegacyChatRequest {
+    fn from(req: ChatRequest) -> Self {
+        let response_format = match req.response_format {
+            ResponseFormat::JsonSchema { json_schema } => {
+                // Re-apply the old transform that added additionalProperties to ALL
+                // schema objects (including primitives like string/integer)
+                let mut schema = json_schema.schema.schema;
+                LegacyOpenAiTransform.transform(&mut schema);
+
+                LegacyResponseFormat::JsonSchema {
+                    json_schema: LegacyJsonSchemaFormat {
+                        name: json_schema.name,
+                        strict: json_schema.strict,
+                        schema: LegacySchemaFormat {
+                            additional_properties: false,
+                            schema,
+                        },
+                    },
+                }
+            }
+            ResponseFormat::JsonObject => LegacyResponseFormat::JsonObject,
+            ResponseFormat::Text => LegacyResponseFormat::Text,
+        };
+
+        LegacyChatRequest {
+            model: req.model,
+            messages: req.messages,
+            response_format,
+            service_tier: req.service_tier,
+            reasoning_effort: req.reasoning_effort,
+            extra_body: req.extra_body,
+        }
+    }
+}
+
+/// The old OpenAiTransform added `additionalProperties: false` to ALL schema objects,
+/// not just object-type ones. We need to reproduce that for legacy cache key computation.
+struct LegacyOpenAiTransform;
+
+impl schemars::transform::Transform for LegacyOpenAiTransform {
+    fn transform(&mut self, schema: &mut Schema) {
+        if let Some(obj) = schema.as_object_mut() {
+            if obj.get("$ref").is_none() {
+                obj.insert(
+                    "additionalProperties".to_string(),
+                    serde_json::Value::Bool(false),
+                );
+            }
+        }
+        schemars::transform::transform_subschemas(self, schema);
+    }
+}
+// END LEGACY TYPES
 
 /// An object specifying the format that the model must output.
 /// `ResponseFormat::JsonSchema` enables Structured Outputs which ensures the model will match your supplied JSON schema
@@ -265,21 +427,16 @@ impl JsonSchemaFormat {
         Self {
             name: ty_name.to_string(),
             strict: true,
-            schema: SchemaFormat {
-                additional_properties: false,
-                schema,
-            },
+            schema: SchemaFormat { schema },
         }
     }
 }
 
-/// A JSON schema with an "additionalProperties" field (expected by OpenAI).
+/// A JSON schema format wrapper.
+/// The `additionalProperties` constraint is handled by [`OpenAiTransform`](crate::schema::OpenAiTransform)
+/// which adds it only to object-type schemas.
 #[derive(Serialize, Debug, Clone)]
 pub struct SchemaFormat {
-    /// Whether additional properties are allowed. For OpenAI, you always want this to be false.
-    #[serde(rename = "additionalProperties")]
-    pub additional_properties: bool,
-
     /// The schema.
     #[serde(flatten)]
     pub schema: Schema,
@@ -474,6 +631,10 @@ pub enum ChatError {
     /// The API did not return any choices.
     #[error("No choices returned from API")]
     NoChoices,
+
+    /// The request was not found in the cache and the client is in cached-only mode.
+    #[error("Cache miss: request not found in cache (cached_only mode is enabled)")]
+    CacheMiss,
 }
 
 /// Errors that can occur when sending many chat requests via the batch API.
@@ -574,6 +735,7 @@ impl ChatClient {
             extra_body: None,
             semaphore: Semaphore::new(100),
             http_client: crate::utils::pooled_client(),
+            cached_only: false,
         }
     }
 
@@ -631,6 +793,15 @@ impl ChatClient {
     pub fn with_max_concurrent_requests(self, max: usize) -> Self {
         Self {
             semaphore: Semaphore::new(max),
+            ..self
+        }
+    }
+
+    /// If set, all uncached requests will fail with [`ChatError::CacheMiss`] instead of
+    /// hitting the API. Useful for testing or offline usage.
+    pub fn with_cached_only(self) -> Self {
+        Self {
+            cached_only: true,
             ..self
         }
     }
@@ -926,6 +1097,9 @@ impl ChatClient {
             let (result, _usage) = cached_response?;
             result
         } else {
+            if self.cached_only {
+                return Err(ChatError::CacheMiss);
+            }
             let chat_response = self.chat_uncached(&chat_request).await?;
             let (result, usage) = process_result(chat_response.clone())?;
             *self.usage.write().unwrap() += usage;
@@ -1198,6 +1372,8 @@ impl ChatClient {
         map_response: impl FnOnce(String) -> Result<T, ChatError>,
     ) -> Option<Result<T, ChatError>> {
         let chat_request_cache_key = chat_request.cache_key();
+        // LEGACY CACHE KEY MIGRATION (can be removed in a future version)
+        let legacy_cache_key = chat_request.legacy_cache_key();
         let chat_request = serde_json::to_string(chat_request).ok()?;
 
         // First, check the cache
@@ -1214,41 +1390,64 @@ impl ChatClient {
             );
         }
 
-        // Read the compressed data from disk, checking sharded then flat paths,
-        // then falling back to backup cache directory
-        let compressed_data =
-            match crate::utils::read_from_cache_dir(cache_directory, &chat_request_cache_key).await
-            {
-                Some(data) => data,
-                None => {
-                    // If not found in main cache, check backup cache directory
-                    if let Some(backup_cache_directory) = &self.backup_cache_directory {
-                        if backup_cache_directory.exists() {
-                            if let Some(data) = crate::utils::read_from_cache_dir(
-                                backup_cache_directory,
-                                &chat_request_cache_key,
-                            )
-                            .await
-                            {
-                                // Found in backup cache, move it to main cache (sharded)
-                                let _ = crate::utils::write_to_cache_dir(
-                                    cache_directory,
-                                    &chat_request_cache_key,
-                                    &data,
-                                )
+        // Helper to search for a cache key across main and backup cache directories.
+        // Returns the compressed data if found, and copies it to the main cache under
+        // `copy_as_key` if it was found elsewhere.
+        let find_in_cache = |key: &str, copy_as_key: &str| {
+            let cache_directory = cache_directory.clone();
+            let backup_cache_directory = self.backup_cache_directory.clone();
+            let key = key.to_string();
+            let copy_as_key = copy_as_key.to_string();
+            async move {
+                // Check main cache directory
+                if let Some(data) = crate::utils::read_from_cache_dir(&cache_directory, &key).await
+                {
+                    // If found under a different key, copy to the canonical key
+                    if key != copy_as_key {
+                        let _ =
+                            crate::utils::write_to_cache_dir(&cache_directory, &copy_as_key, &data)
                                 .await;
-                                data
-                            } else {
-                                return None;
-                            }
-                        } else {
-                            return None;
+                    }
+                    return Some(data);
+                }
+
+                // Check backup cache directory
+                if let Some(backup) = &backup_cache_directory {
+                    if backup.exists() {
+                        if let Some(data) = crate::utils::read_from_cache_dir(backup, &key).await {
+                            // Copy to main cache under the canonical key
+                            let _ = crate::utils::write_to_cache_dir(
+                                &cache_directory,
+                                &copy_as_key,
+                                &data,
+                            )
+                            .await;
+                            return Some(data);
                         }
-                    } else {
-                        return None;
                     }
                 }
-            };
+
+                None
+            }
+        };
+
+        // Read the compressed data from disk, checking sharded then flat paths,
+        // then falling back to backup cache directory
+        let compressed_data = if let Some(data) =
+            find_in_cache(&chat_request_cache_key, &chat_request_cache_key).await
+        {
+            data
+        }
+        // LEGACY CACHE KEY MIGRATION (can be removed in a future version)
+        // Try the legacy cache key (pre-v0.17.1 format with duplicate additionalProperties).
+        // If found, copy to the new cache key so future lookups use the new format.
+        else if legacy_cache_key != chat_request_cache_key {
+            find_in_cache(&legacy_cache_key, &chat_request_cache_key).await?
+        }
+        // END LEGACY CACHE KEY MIGRATION
+        else {
+            return None;
+        };
 
         // Decompress the data
         let decompressed_data = zstd::decode_all(compressed_data.as_slice()).ok()?;
@@ -1262,44 +1461,18 @@ impl ChatClient {
     async fn chat_uncached(&self, chat_request: &ChatRequest) -> Result<String, ChatError> {
         let _permit = self.semaphore.acquire().await.unwrap();
 
-        let mut request = self
+        let response = self
             .http_client
             .post(self.chat_completions_url())
             .header("Authorization", format!("Bearer {}", self.api_key.clone()))
-            .header("Content-Type", "application/json");
-
-        // Gemini's OpenAI-compatible endpoint doesn't support additionalProperties
-        // in JSON schemas. We strip it from the request body without affecting the
-        // cache key (which is computed from the original ChatRequest).
-        if self.base_url.host_str() == Some("generativelanguage.googleapis.com") {
-            let mut body = serde_json::to_value(chat_request).unwrap();
-            Self::strip_additional_properties(&mut body);
-            request = request.json(&body);
-        } else {
-            request = request.json(chat_request);
-        }
-
-        let response = request.send().await?.text().await?;
+            .header("Content-Type", "application/json")
+            .json(chat_request)
+            .send()
+            .await?
+            .text()
+            .await?;
 
         Ok(response)
-    }
-
-    /// Recursively remove all `additionalProperties` keys from a JSON value.
-    fn strip_additional_properties(value: &mut serde_json::Value) {
-        match value {
-            serde_json::Value::Object(map) => {
-                map.remove("additionalProperties");
-                for v in map.values_mut() {
-                    Self::strip_additional_properties(v);
-                }
-            }
-            serde_json::Value::Array(arr) => {
-                for v in arr.iter_mut() {
-                    Self::strip_additional_properties(v);
-                }
-            }
-            _ => {}
-        }
     }
 
     fn decode_json<T: DeserializeOwned>(json: &str) -> Result<T, serde_json::Error> {
@@ -1337,7 +1510,7 @@ impl ChatClient {
     /// If you notice the prices being out of date, [please leave an issue](https://github.com/not-pizza/tysm)!
     pub fn cost(&self) -> Option<f64> {
         let usage = self.usage();
-        crate::model_prices::cost(&self.model, usage)
+        crate::model_prices::cost(&self.model, self.service_tier.as_deref(), usage)
     }
 }
 
@@ -1420,6 +1593,84 @@ fn service_tier_excluded_from_cache_key() {
     assert_ne!(request1.cache_key(), request4.cache_key());
 }
 
+#[test]
+fn schema_has_no_duplicate_additional_properties() {
+    use schemars::JsonSchema;
+
+    #[derive(JsonSchema)]
+    #[allow(dead_code)]
+    struct TestStruct {
+        name: String,
+        age: u32,
+    }
+
+    let schema = JsonSchemaFormat::new::<TestStruct>();
+    let serialized = serde_json::to_string_pretty(&schema).unwrap();
+    println!("{serialized}");
+
+    // additionalProperties should only appear on object-type schemas, not on primitives,
+    // and should never be duplicated
+    let count = serialized.matches("additionalProperties").count();
+    assert_eq!(
+        count, 1,
+        "Expected exactly 1 additionalProperties (on the root object) but found {count} in:\n{serialized}"
+    );
+
+    // Verify the legacy cache key differs from the new one (proving migration is needed)
+    let request = ChatRequest {
+        model: "gpt-4o".to_string(),
+        messages: vec![ChatMessage::user("test")],
+        response_format: ResponseFormat::JsonSchema {
+            json_schema: JsonSchemaFormat::new::<TestStruct>(),
+        },
+        service_tier: None,
+        reasoning_effort: None,
+        extra_body: None,
+    };
+    assert_ne!(
+        request.cache_key(),
+        request.legacy_cache_key(),
+        "Legacy and new cache keys should differ for structured output requests"
+    );
+
+    // But for non-schema requests, they should be the same
+    let text_request = ChatRequest {
+        model: "gpt-4o".to_string(),
+        messages: vec![ChatMessage::user("test")],
+        response_format: ResponseFormat::Text,
+        service_tier: None,
+        reasoning_effort: None,
+        extra_body: None,
+    };
+    assert_eq!(
+        text_request.cache_key(),
+        text_request.legacy_cache_key(),
+        "Legacy and new cache keys should match for non-schema requests"
+    );
+}
+
+#[cfg(test)]
+#[tokio::test]
+#[ignore]
+async fn openai_structured_output() {
+    use schemars::JsonSchema;
+    use serde::Deserialize;
+
+    #[derive(Deserialize, Debug, JsonSchema)]
+    #[allow(dead_code)]
+    struct CapitalCity {
+        city: String,
+        country: String,
+    }
+
+    #[cfg(feature = "dotenvy")]
+    dotenvy::dotenv().ok();
+    let client = ChatClient::from_env("gpt-4o-mini").unwrap();
+
+    let result: CapitalCity = client.chat("What is the capital of France?").await.unwrap();
+    assert_eq!(result.city, "Paris");
+}
+
 #[cfg(test)]
 #[tokio::test]
 #[ignore]
@@ -1443,4 +1694,51 @@ async fn gemini_structured_output() {
 
     let result: CapitalCity = client.chat("What is the capital of France?").await.unwrap();
     assert_eq!(result.city, "Paris");
+}
+
+#[cfg(test)]
+#[tokio::test]
+#[ignore]
+async fn gemini_audio_transcription() {
+    use schemars::JsonSchema;
+    use serde::Deserialize;
+
+    #[derive(Deserialize, Debug, JsonSchema)]
+    #[allow(dead_code)]
+    struct Transcription {
+        text: String,
+    }
+
+    #[cfg(feature = "dotenvy")]
+    dotenvy::dotenv().ok();
+    let api_key = std::env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY must be set");
+
+    let client = ChatClient::new(api_key, "gemini-3-flash-preview")
+        .with_url("https://generativelanguage.googleapis.com/v1beta/openai/");
+
+    let audio_bytes = std::fs::read("test_fixtures/harvard.wav").unwrap();
+
+    let result: Transcription = client
+        .chat_with_messages(vec![ChatMessage::new(
+            Role::User,
+            vec![
+                ChatMessageContent::InputAudio {
+                    input_audio: InputAudio::wav(audio_bytes),
+                },
+                ChatMessageContent::Text {
+                    text: "Transcribe this audio exactly.".to_string(),
+                },
+            ],
+        )])
+        .await
+        .unwrap();
+
+    // Harvard sentences - just check a few key phrases are present
+    println!("Transcription: {}", result.text);
+    let text = result.text.to_lowercase();
+    assert!(
+        text.contains("stale smell of old beer"),
+        "Expected 'stale smell of old beer' in transcription, got: {}",
+        result.text
+    );
 }

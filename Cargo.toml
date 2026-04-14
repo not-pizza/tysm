@@ -1,6 +1,6 @@
 [package]
 name = "tysm"
-version = "0.17.1"
+version = "0.18.0"
 edition = "2021"
 description = "Batteries-included Rust OpenAI Client"
 license = "MIT"
@@ -35,6 +35,7 @@ zstd = "0.13.3"
 log = "0.4.27"
 itertools = "0.14.0"
 dashmap = "6.1.0"
+base64 = "0.22.1"
 
 [dev-dependencies]
 tokio = { version = "1.21.2", features = ["macros", "rt-multi-thread", "full"] }

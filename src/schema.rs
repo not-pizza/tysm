@@ -10,7 +10,16 @@ impl Transform for OpenAiTransform {
     fn transform(&mut self, schema: &mut Schema) {
         if let Some(obj) = schema.as_object_mut() {
             if obj.get("$ref").is_none() {
-                obj.insert("additionalProperties".to_string(), Value::Bool(false));
+                // Only add additionalProperties to object-type schemas
+                let is_object = obj
+                    .get("type")
+                    .and_then(|v| v.as_str())
+                    .map(|t| t == "object")
+                    .unwrap_or(false)
+                    || obj.contains_key("properties");
+                if is_object {
+                    obj.insert("additionalProperties".to_string(), Value::Bool(false));
+                }
                 obj.remove("format");
                 obj.remove("minimum");
                 obj.remove("maximum");
